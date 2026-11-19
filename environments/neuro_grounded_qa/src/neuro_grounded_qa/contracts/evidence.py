@@ -103,7 +103,14 @@ class Entity(BaseModel):
 
 
 class EdgeEvidence(BaseModel):
-    """One graph edge as an evidence unit: ``subject --relation--> object``.
+    """One graph edge as an evidence unit: an undirected fact ``subject -relation- object``.
+
+    **Undirected.** Which end is ``subject`` and which is ``object`` is arbitrary but
+    stable: the store keeps one row per edge, so each fact has exactly one ID. Claims
+    may state the fact in either order; ``contracts.facts.same_fact`` and
+    ``supports`` compare without direction. PrimeKG ships many edges twice, once per
+    orientation; the data lane's store builder deduplicates those reversed rows into
+    one edge.
 
     ``relation`` is the graph's relation label, copied verbatim; claims must copy it
     exactly, which is what makes the support check exact equality.
@@ -152,11 +159,26 @@ class EvidenceStore(Protocol):
     The data lane's real store (built from the downloaded graph) and the in-memory
     fixture store both satisfy this, so the harness and reward lanes can build and
     test against fixtures before any graph data exists. ``isinstance`` checks only
-    that the methods exist, not their behavior; the contract tests cover behavior.
+    that the members exist, not their behavior; the contract tests cover behavior.
     """
+
+    @property
+    def build_id(self) -> str:
+        """Which graph build this store holds: graph name, version and build hash.
+
+        Evidence IDs are only meaningful within one build, so traces, items and
+        audit results record this to say which build their IDs refer to. The
+        format is the data lane's choice; the in-memory store uses ``"fixture"``.
+        """
+        ...
 
     def get(self, evidence_id: str) -> Evidence | None:
         """The evidence unit with this ID, or None if the store has none."""
+        ...
+
+    def entity(self, entity_id: str) -> Entity | None:
+        """The entity with this graph ID, or None. Lets a tool resolve an ID the
+        model copied from an earlier result without searching by name."""
         ...
 
     def search_entities(self, text: str, limit: int) -> list[Entity]:
@@ -189,11 +211,16 @@ class InMemoryEvidenceStore:
     - ``relations``: sorted unique labels.
 
     Raises ``ValueError`` at construction on duplicate edge IDs, or on two different
-    entities sharing an ID, since either would make lookups ambiguous.
+    entities sharing an ID, since either would make lookups ambiguous. It doesn't
+    check for the same fact stored twice under two IDs; deduplicating that is the
+    real store builder's job.
     """
 
     def __init__(
-        self, edges: Iterable[EdgeEvidence], entities: Iterable[Entity] = ()
+        self,
+        edges: Iterable[EdgeEvidence],
+        entities: Iterable[Entity] = (),
+        build_id: str = "fixture",
     ) -> None:
         """Build the store.
 
@@ -202,7 +229,9 @@ class InMemoryEvidenceStore:
                 automatically.
             entities: extra entities, for nodes with no edges in the store (useful
                 for "absent" cases, where an entity exists but nothing links it).
+            build_id: the store's build identifier (see ``EvidenceStore.build_id``).
         """
+        self._build_id = build_id
         self._edges: dict[str, EdgeEvidence] = {}
         self._entities: dict[str, Entity] = {}
         for entity in entities:
@@ -225,10 +254,11 @@ class InMemoryEvidenceStore:
     def from_records(cls, data: Mapping[str, Any]) -> InMemoryEvidenceStore:
         """Build a store from a normalized dict, the format of the fixture file.
 
-        ``data`` has ``entities`` (a list of :class:`Entity` dicts) and ``edges``
+        ``data`` has ``entities`` (a list of :class:`Entity` dicts), ``edges``
         (dicts with ``id``, ``subject`` and ``object`` as entity IDs, ``relation``
-        and optional ``display_relation``). Entities are stored once and edges refer
-        to them, which keeps fixture files short and consistent.
+        and optional ``display_relation``) and an optional ``build_id`` (default
+        ``"fixture"``). Entities are stored once and edges refer to them, which keeps
+        fixture files short and consistent.
 
         Raises:
             ValueError: if an edge refers to an entity ID not in ``entities``.
@@ -248,14 +278,19 @@ class InMemoryEvidenceStore:
                     object=entities[record["object"]],
                 )
             )
-        return cls(edges, entities.values())
+        return cls(edges, entities.values(), build_id=data.get("build_id", "fixture"))
+
+    @property
+    def build_id(self) -> str:
+        """The build identifier given at construction."""
+        return self._build_id
 
     def get(self, evidence_id: str) -> Evidence | None:
         """The edge with this ID, or None."""
         return self._edges.get(evidence_id)
 
     def entity(self, entity_id: str) -> Entity | None:
-        """The entity with this ID, or None. A convenience, not part of the Protocol."""
+        """The entity with this ID, or None."""
         return self._entities.get(entity_id)
 
     def search_entities(self, text: str, limit: int) -> list[Entity]:

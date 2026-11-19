@@ -4,14 +4,17 @@ Each module fixes one interface as code, with contract tests in ``tests/contract
 
 - ``evidence``: kind-tagged evidence units (graph edges now, ``E:`` IDs; passages
   reserved, ``P:``), graph-neutral entities, and the ``EvidenceStore`` protocol with
-  a small in-memory implementation for fixtures.
+  a small in-memory implementation for fixtures. Edges are undirected facts.
+- ``facts``: ``same_fact`` and ``supports``, the one direction-insensitive rule for
+  comparing triples (claims, gold points, premises, edges).
 - ``items``: the question item schema, a ``vf.TaskData`` subclass carrying gold
-  triples, gold evidence, answerability, evidence scope and provenance.
+  triples, gold evidence, answerability (including correctable false premises),
+  evidence scope and provenance.
 - ``output``: the model's final answer format (claims as graph-ID triples citing
   evidence IDs, or an abstention) and its strict parser ``parse_output``.
 - ``trace``: the JSON payload evidence-returning tools emit, and ``retrieved_ids``,
-  which decides under the strict-retrieval rule which evidence the model actually
-  retrieved.
+  which decides under the strict-retrieval rule (sampled call, descendant, one
+  result per call) which evidence the model actually retrieved.
 
 Claims cite entities by graph ID and relations by the graph's own labels; names are
 display-only. Change these only on purpose, together with their tests.
@@ -30,12 +33,14 @@ from neuro_grounded_qa.contracts.evidence import (
     evidence_kind,
     is_evidence_id,
 )
+from neuro_grounded_qa.contracts.facts import Fact, TripleLike, same_fact, supports, triple
 from neuro_grounded_qa.contracts.items import (
     QTYPE_ANSWERABLE,
     Answerable,
     EvidenceScope,
     GoldPoint,
     ItemSource,
+    PremiseTriple,
     QType,
     QuestionItem,
     Split,
@@ -74,12 +79,19 @@ __all__ = [
     "InMemoryEvidenceStore",
     "evidence_kind",
     "is_evidence_id",
+    # facts
+    "Fact",
+    "TripleLike",
+    "same_fact",
+    "supports",
+    "triple",
     # items
     "QTYPE_ANSWERABLE",
     "Answerable",
     "EvidenceScope",
     "GoldPoint",
     "ItemSource",
+    "PremiseTriple",
     "QType",
     "QuestionItem",
     "Split",

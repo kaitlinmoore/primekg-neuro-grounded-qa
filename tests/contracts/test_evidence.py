@@ -101,6 +101,41 @@ def test_fixture_store_satisfies_protocol(store):
     assert len(store) == 12
 
 
+def test_protocol_requires_entity_and_build_id():
+    class Base:
+        def get(self, evidence_id): ...
+        def search_entities(self, text, limit): ...
+        def neighbors(self, entity_id, relation, limit): ...
+        def relations(self): ...
+
+    class MissingEntity(Base):
+        build_id = "x"
+
+    class MissingBuildId(Base):
+        def entity(self, entity_id): ...
+
+    class Complete(MissingEntity):
+        def entity(self, entity_id): ...
+
+    assert not isinstance(MissingEntity(), EvidenceStore)
+    assert not isinstance(MissingBuildId(), EvidenceStore)
+    assert isinstance(Complete(), EvidenceStore)
+
+
+def test_build_id(store):
+    assert store.build_id == "fixture-mini-store-v1"  # from the fixture file
+    assert InMemoryEvidenceStore([]).build_id == "fixture"
+    assert InMemoryEvidenceStore([], build_id="primekg-x").build_id == "primekg-x"
+
+
+def test_entity_lookup(store):
+    assert store.entity("GENE_D") == Entity(
+        id="GENE_D", name="Gene Delta", type="gene", source="SYNTH"
+    )
+    assert store.entity("DRUG_X").name == "Drug X"
+    assert store.entity("NO_SUCH_ENTITY") is None
+
+
 def test_get_round_trip(store):
     for eid in [f"E:{n:06d}" for n in range(1, 13)]:
         edge = store.get(eid)

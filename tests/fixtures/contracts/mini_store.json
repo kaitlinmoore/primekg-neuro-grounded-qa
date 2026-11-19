@@ -1,5 +1,6 @@
 {
   "_comment": "Synthetic evidence store for contract tests. Every name, ID and relation label is invented; nothing comes from PrimeKG or any real graph. Edges reference entities by ID.",
+  "build_id": "fixture-mini-store-v1",
   "entities": [
     {"id": "GENE_A", "name": "Gene Alpha", "type": "gene", "source": "SYNTH"},
     {"id": "GENE_B", "name": "Gene Beta", "type": "gene", "source": "SYNTH"},
