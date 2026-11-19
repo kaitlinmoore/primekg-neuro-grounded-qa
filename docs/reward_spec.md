@@ -223,7 +223,9 @@ Notes per type:
 - **`partial`**: gold points hold only the answerable part. A full answer that also
   names the unsupported part scores 1; without the flag, 1 − κ. An answer with no claims
   and only `unsupported_parts` scores κ while `flag_only_counts` is True (v0), 0
-  otherwise.
+  otherwise. Items now name the part the graph can't support (`unsupported_part`: a
+  description, plus the absent triple where there is one), for grading and for any
+  later check of flag text; v0 scoring doesn't use it, so any non-blank flag earns κ.
 - **`no`** (unanswerable, and false premises absent from the graph): 1 for abstaining,
   0 for any answer, including one made only of true supported claims or only of
   `unsupported_parts`. A claim restating the premise is unsupported by construction (the
