@@ -1,0 +1,16 @@
+id,type,name,source
+D1,disease,Alzheimer disease (synthetic),MONDO
+D2,disease,familial Alzheimer disease (synthetic),MONDO
+D3,disease,other disease three,MONDO
+D4,disease,other disease four,MONDO
+G1,gene,GENE1,NCBI
+G2,gene,GENE2,NCBI
+G3,gene,GENE3,NCBI
+G4,gene,GENE4,NCBI
+G5,gene,GENE5,NCBI
+G6,gene,GENE6,NCBI
+H,gene,HUBGENE,NCBI
+R1,drug,drug one,DrugBank
+R2,drug,drug two,DrugBank
+P1,phenotype,phenotype one,HPO
+A1,anatomy,anatomy one,UBERON
