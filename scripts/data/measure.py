@@ -247,6 +247,12 @@ def measure_one(con, graph: str, spec: SubgraphSpec) -> dict:
     # ---- C1, C2 single-hop ----
     facts = sg.single_hop_facts(con, name)
     res["single_hop_facts"] = one(f"SELECT count(*) FROM {facts}")
+    # Reported, not gating: facts collapsed over which seed node they hang on.
+    # Seed subtypes often repeat the main node's edges (same partner, same
+    # relation); those would make near-duplicate questions.
+    res["single_hop_distinct_object_relation"] = one(
+        f"SELECT count(*) FROM (SELECT DISTINCT o, rel FROM {facts} WHERE o NOT IN (SELECT id FROM seed))"
+    )
     by_rel = dict(q(f"SELECT rel, count(*) FROM {facts} GROUP BY rel ORDER BY 2 DESC"))
     res["single_hop_by_relation"] = by_rel
     res["single_hop_relations_ge_30"] = sum(1 for n in by_rel.values() if n >= C2_MIN_FACTS)
