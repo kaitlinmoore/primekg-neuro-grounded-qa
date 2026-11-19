@@ -1,0 +1,6 @@
+{
+  "description": "A plain JSON abstention.",
+  "text": "{\n  \"abstain\": true,\n  \"reason\": \"No retrieved edge links Gene Delta to any disease.\"\n}",
+  "expected_type": "Abstain",
+  "expected_reason": null
+}

@@ -1,0 +1,6 @@
+{
+  "description": "Claims for the supported part, unsupported_parts for the rest.",
+  "text": "{\n  \"claims\": [\n    {\n      \"subject_id\": \"GENE_A\",\n      \"relation\": \"associated_with\",\n      \"object_id\": \"DIS_1\",\n      \"subject_name\": \"Gene Alpha\",\n      \"object_name\": \"Disease One\",\n      \"cites\": [\n        \"E:000001\"\n      ]\n    },\n    {\n      \"subject_id\": \"GENE_B\",\n      \"relation\": \"associated_with\",\n      \"object_id\": \"DIS_1\",\n      \"cites\": [\n        \"E:000002\"\n      ]\n    }\n  ],\n  \"answer_text\": \"Gene Alpha and Gene Beta are associated with Disease One.\",\n  \"unsupported_parts\": [\n    \"No retrieved evidence links any drug to Disease One through Gene Delta.\"\n  ]\n}",
+  "expected_type": "Answer",
+  "expected_reason": null
+}

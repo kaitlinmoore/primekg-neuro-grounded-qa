@@ -1,0 +1,6 @@
+{
+  "description": "Whitespace only.",
+  "text": "   \n  ",
+  "expected_type": "ParseFailure",
+  "expected_reason": "empty"
+}
