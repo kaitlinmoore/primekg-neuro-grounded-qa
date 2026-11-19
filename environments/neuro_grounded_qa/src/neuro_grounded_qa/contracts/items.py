@@ -138,6 +138,11 @@ class QuestionItem(vf.TaskData):
     - ``premise`` is set exactly when ``qtype="false_premise"``, and never states the
       same fact as a gold point (by ``same_fact``, so the reverse of a directed gold
       point is allowed).
+    - All triples on one relation label (the gold points and the premise) share one
+      ``directed`` value. Mixed flags would let the item validate while the reward
+      compares the same relation in order in one place and in either order in
+      another. Whether the flags also match the store's edges can't be checked here
+      (an item has no store); the data lane's builder checks that.
 
     For ``correctable`` items the gold points hold the correction, as ordinary
     triples; the output schema needs nothing extra, since a correction is just cited
@@ -192,6 +197,14 @@ class QuestionItem(vf.TaskData):
                 )
         if (self.qtype == "false_premise") != (self.premise is not None):
             raise ValueError("premise is required for false_premise items only")
+        flags: dict[str, bool] = {}
+        triples = [*self.gold_points, *([self.premise] if self.premise else [])]
+        for t in triples:
+            if flags.setdefault(t.relation, t.directed) != t.directed:
+                raise ValueError(
+                    f"mixed directed flags on relation {t.relation!r}: every gold point "
+                    "and the premise on one relation must share one directed value"
+                )
         if self.premise is not None:
             for gp in self.gold_points:
                 if same_fact(self.premise, gp):

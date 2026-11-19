@@ -289,3 +289,51 @@ def test_directed_item_survives_trace_round_trip():
     trace = TraceBuilder(item).build()
     typed = vf.Trace[QuestionItem, vf.State, vf.AgentConfig]
     assert typed.model_validate_json(trace.to_json()).task.data == item
+
+
+# --- one directed value per relation within an item --------------------------------
+
+
+def test_directed_gold_point_with_unflagged_premise_is_rejected():
+    """The mixed-flag case this check exists for.
+
+    Gold point ``DIS_3 subtype_of DIS_G`` is directed; the premise ``DIS_G subtype_of
+    DIS_3`` isn't. ``same_fact`` compares them in order (either side directed), so the
+    premise check alone would pass. But the reward compares claims with the unflagged
+    premise in either order, so the correct correction claim would count as asserting
+    the premise. The item is rejected instead.
+    """
+    raw = hierarchy_item()
+    raw["premise"]["directed"] = False
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'subtype_of'"):
+        QuestionItem.model_validate(raw)
+
+
+def test_unflagged_gold_point_with_directed_premise_is_rejected():
+    raw = hierarchy_item()
+    raw["gold_points"][0]["directed"] = False
+    with pytest.raises(ValidationError, match="mixed directed flags"):
+        QuestionItem.model_validate(raw)
+
+
+def test_gold_point_and_premise_both_directed_is_valid():
+    item = QuestionItem.model_validate(hierarchy_item())
+    assert item.premise.directed and all(gp.directed for gp in item.gold_points)
+
+
+def test_mixed_flags_between_gold_points_on_one_relation_are_rejected():
+    raw = by_qtype(load_items(), "single_hop")
+    raw["gold_points"][1] = {**raw["gold_points"][1], "directed": True}
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'associated_with'"):
+        QuestionItem.model_validate(raw)
+
+
+def test_different_relations_may_have_different_flags():
+    raw = by_qtype(load_items(), "single_hop")  # associated_with gold points, unflagged
+    raw["gold_points"].append(
+        {"id": "gp3", "subject_id": "DIS_3", "relation": "subtype_of",
+         "object_id": "DIS_G", "evidence": ["E:000013"], "directed": True}
+    )
+    raw["gold_evidence"].append("E:000013")
+    item = QuestionItem.model_validate(raw)
+    assert [gp.directed for gp in item.gold_points] == [False, False, True]
