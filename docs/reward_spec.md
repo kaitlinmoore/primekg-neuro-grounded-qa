@@ -34,8 +34,9 @@ Nothing else in the trace is read for scoring: not the free text (`answer_text`,
 `reason`, the content of `unsupported_parts`), not entity names, not IDs that appear
 in the model's text. Triples are never compared directly: every comparison goes
 through `contracts.supports` (claim vs evidence) or `contracts.same_fact` (claim vs
-gold point or premise), so a change to that rule, such as a per-relation
-directedness flag, flows into the reward unchanged.
+gold point, premise or another claim), so the direction rule lives in one place:
+facts match in either order, except facts flagged `directed` (hierarchy relations),
+which match in order only.
 
 ## Final-answer source
 
@@ -115,16 +116,20 @@ a claim with any stripped cite is unsupported, even if a valid cite states it.
 ### 3. Claim support: `supporting_citation(claim, valid_cites, retrieved)`
 
 **Definition.** A claim is supported if at least one of its valid cites is evidence that
-states the claim **and none of its cites was stripped**. The check dispatches on the evidence's `kind` through
-`SUPPORT_CHECKERS`; for edges it is `contracts.supports`: identical relation label, and
-the two entity IDs matching in either order.
+states the claim **and none of its cites was stripped**. The check dispatches on the
+evidence's `kind` through `SUPPORT_CHECKERS`; for edges it is `contracts.supports`:
+identical relation label, and the two entity IDs matching in either order, or in the
+stored order only if the edge is flagged `directed`.
 
 **Edge cases.**
 - A valid citation that doesn't state the claim (wrong edge, wrong relation label,
   wrong entity) doesn't support it.
-- Direction doesn't matter: `DIS_1 associated_with GENE_A` is supported by an edge
-  stored as `GENE_A associated_with DIS_1`. This holds for directional relations too
-  (`targets`, `indicated_for`), a known limitation (see "Limitations").
+- Undirected edges match in either order: `DIS_1 associated_with GENE_A` is supported
+  by an edge stored as `GENE_A associated_with DIS_1`. This holds for relations whose
+  roles are fixed by entity types too (`targets`, `indicated_for`; see "Limitations").
+- Directed edges (`directed: true`, same-type hierarchy relations, stored child →
+  parent) match in order only: `DIS_G subtype_of DIS_3` is not supported by the edge
+  `DIS_3 subtype_of DIS_G`.
 - Relation labels match exactly: no case folding, synonym or inverse-label matching.
 - Names (`subject_name`, `object_name`) are never compared.
 - Extra non-supporting cites alongside a supporting one cost nothing in the score; they
@@ -154,10 +159,16 @@ claim, using `contracts.same_fact`.
 
 **Definition.** `λ · |U| / (|S| + |U|)`, and 0 when the answer has no claims. S and U
 count **distinct facts** (reward v0): claims that state the same fact, by
-`contracts.same_fact` (so including a restatement with subject and object swapped),
-are collapsed into one (`scoring.group_facts`) before counting. A fact is supported if
-any copy of it is supported under the strict-citation rule, and it counts once, in S or
-in U.
+`contracts.same_fact` (so including a restatement with subject and object swapped,
+unless the relation is directed), are collapsed into one (`scoring.group_facts`) before
+counting. A fact is supported if any copy of it is supported under the strict-citation
+rule, and it counts once, in S or in U.
+
+Claims carry no `directed` flag, so comparing two claims takes direction from the
+relation label: a relation is directed for this score if any retrieved edge, gold
+point or premise with that label is flagged (`scoring.directed_relations`). A directed
+fact and its reversal therefore stay two facts, and the false reversal can't hide in
+the correct claim's group.
 
 **Edge cases.**
 - For a fixed number of supported facts, the penalty rises with each unsupported fact
@@ -287,8 +298,8 @@ as 0. Per-tool keys appear only when nonzero; read a missing key as 0.
 | `premise_asserted` | 1/0, false-premise items only: a claim states the premise (`same_fact`); the "premise accepted" failure |
 | `claims` | claims per answer as written, duplicates included (0 for an abstention or parse failure) |
 | `citations_per_claim` | mean distinct cites per claim |
-| `supported_claims`, `unsupported_claims` | \|S\|, \|U\|: distinct facts after deduplication |
-| `duplicate_claims` | claims removed by deduplication (claims stating the same fact as an earlier claim, in either order) |
+| `supported_facts`, `unsupported_facts` | \|S\|, \|U\|: distinct facts after deduplication |
+| `duplicate_claims` | claims removed by deduplication (claims stating the same fact as an earlier claim; reversed restatements count unless the relation is directed) |
 | `voided_claims` | claims a valid cite states but a stripped cite made unsupported (strict citations) |
 | `stripped_cites` | cites to IDs that weren't retrieved |
 | `nonsupporting_valid_cites` | retrieved cites other than the one that supported the claim |
@@ -329,10 +340,17 @@ rewards into `trace.reward`; and skipping scoring for format-violation traces.
 
 ## Limitations
 
-- **Direction-insensitive matching** applies to directional relations too: "DIS_1
-  targets DRUG_X" is supported by the edge "DRUG_X targets DIS_1". This is the cost of
-  not trusting graph direction (settled 2026-11-19). If the contracts gain a
-  per-relation directedness flag, the reward picks it up through `supports`/`same_fact`.
+- **Direction-insensitive matching for relations whose roles are fixed by entity
+  types.** Facts flagged `directed` (same-type hierarchy relations) match in order only.
+  Every other relation matches in either order, including directional ones whose
+  entity types fix the roles: "DIS_1 targets DRUG_X" is supported by the edge "DRUG_X
+  targets DIS_1". The reversed reading is nonsense rather than a different true fact,
+  but the reward doesn't penalize it (settled 2026-11-19: PrimeKG's stored order is
+  arbitrary for these).
+- **Direction for claim-vs-claim comparison comes from what the score sees.** If a
+  directed relation appears in no retrieved edge, gold point or premise, deduplication
+  treats it as undirected. Such claims are unsupported anyway (no retrieved edge states
+  them), so this changes at most how many unsupported facts are counted.
 - **Free text is unscored.** `answer_text` can contradict the claims, and
   `unsupported_parts` can say anything; neither changes the score.
 - **No precision term beyond the penalty.** A claim that is true, retrieved and
@@ -360,16 +378,18 @@ measures them before anything is changed.
 
 **Other candidates:**
 
-4. **Directional relations matched without direction** (Limitations). A directed flag
-   for hierarchy relations is being added to the contracts separately; the reward picks
-   it up through `supports`/`same_fact`.
+4. **Reversed type-fixed relations** (Limitations). Hierarchy relations are now
+   flagged `directed` and match in order only; relations whose roles are fixed by entity
+   types (`targets`, `indicated_for`) still match reversed.
 5. **Abstain on correctable items.** Mitigated in v0: with A = 0.7, a cited correction
    (1.0) beats abstaining. The audit can still check whether 0.7 is low enough.
 
 **Closed in v0, kept as regression cases:**
 
-6. **Duplicate claims.** Repeating a supported claim (in either order) no longer adds
-   to |S|: duplicate facts count once (`test_scoring.py`, "Duplicate facts").
+6. **Duplicate claims.** Repeating a supported claim (in either order, for undirected
+   relations) no longer adds to |S|: duplicate facts count once. A reversed directed
+   claim is a separate, unsupported fact, so it can't hide behind the correct one
+   (`test_scoring.py`, "Duplicate facts").
 7. **Mixing a fabricated cite with a real one.** One bad cite voids the claim
    (`test_scoring.py`, "Strict citations"; end to end in
    `tests/integration/test_end_to_end.py`).
