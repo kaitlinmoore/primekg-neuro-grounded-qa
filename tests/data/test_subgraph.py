@@ -178,7 +178,7 @@ def test_contradiction_edges(tiny):
 
 def test_contradiction_skips_pairs_carrying_both_relations(tiny):
     con = tiny.con
-    con.execute("INSERT INTO raw_edges VALUES ('D1', 'R1', 'contraindication', false, ['DrugCentral'])")
+    con.execute("INSERT INTO raw_edges (u, v, rel, directed, sources) VALUES ('D1', 'R1', 'contraindication', false, ['DrugCentral'])")
     sg.canonicalize_edges(con)
     sg.build_adjacency(con)
     sg.compute_degree(con)

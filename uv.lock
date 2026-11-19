@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "neuro-grounded-qa",
 ]
+default-groups = ["data", "dev"]
 
 [manifest.dependency-groups]
 data = [{ name = "duckdb", specifier = ">=1.1" }]

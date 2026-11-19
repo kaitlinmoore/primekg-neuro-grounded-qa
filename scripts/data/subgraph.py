@@ -6,9 +6,9 @@ fixture:
 
 ``nodes(id VARCHAR, type VARCHAR, name VARCHAR, source VARCHAR)``
     One row per node.
-``raw_edges(u VARCHAR, v VARCHAR, rel VARCHAR, directed BOOLEAN, sources VARCHAR[])``
+``raw_edges(u VARCHAR, v VARCHAR, rel VARCHAR, directed BOOLEAN, sources VARCHAR[], score DOUBLE)``
     Edges as the source file gives them (possibly duplicated, possibly stored
-    in both directions).
+    in both directions). ``score`` is NULL where the source gives none.
 
 The functions then build, in order:
 
@@ -24,6 +24,10 @@ The functions then build, in order:
    through 1-hop nodes at or below a degree cap.
 5. Candidate counts per question type (the ``count_*`` / ``*_candidates``
    functions). Counts only: nothing here drafts a question.
+6. Reported-only extras: per-disease contributions for a multi-disease seed
+   (:func:`seed_group_contributions`), a score-filtered view of the graph
+   (:func:`apply_score_filter`), and counts of facts whose reversed reading
+   is a different fact (:func:`direction_inversions`).
 
 Absence ("no edge between u and v") is always checked against the **full**
 graph's ``adj``, never the subgraph, so a pair is never called unanswerable
@@ -56,23 +60,32 @@ def canonicalize_edges(con: Con) -> dict:
     same key are one fact, and their ``sources`` lists are unioned. Self-loops
     are kept as facts but never traversed (see :func:`build_adjacency`).
 
+    ``score`` is the highest score among the collapsed rows (NULL if none has
+    one).
+
     Returns counts for the report: raw rows, canonical edges, and how many raw
     rows were duplicates or reverse copies.
     """
+    # Callers that build raw_edges by hand may leave out the score column.
+    has_score = any(
+        c[0] == "score" for c in con.execute("DESCRIBE raw_edges").fetchall()
+    )
+    score = "score" if has_score else "NULL::DOUBLE AS score"
     con.execute(
-        """
+        f"""
         CREATE OR REPLACE TABLE edges AS
         WITH keyed AS (
             SELECT
                 CASE WHEN directed THEN u ELSE least(u, v) END AS u,
                 CASE WHEN directed THEN v ELSE greatest(u, v) END AS v,
-                rel, directed, sources
+                rel, directed, sources, {score}
             FROM raw_edges
         )
         SELECT
             row_number() OVER (ORDER BY rel, u, v, directed) AS eid,
             u, v, rel, directed,
-            list_sort(list_distinct(flatten(list(coalesce(sources, []::VARCHAR[]))))) AS sources
+            list_sort(list_distinct(flatten(list(coalesce(sources, []::VARCHAR[]))))) AS sources,
+            max(score) AS score
         FROM keyed
         GROUP BY u, v, rel, directed
         """
@@ -271,7 +284,7 @@ def two_hop_paths(con: Con, name: str) -> str:
     return t
 
 
-def unanswerable_candidates(con: Con, name: str) -> str:
+def unanswerable_candidates(con: Con, name: str, absence_adj: str = "adj") -> str:
     """Create ``unans_<name>(s, r, y)``: type-compatible seed–entity pairs with no edge at all.
 
     For each seed ``s`` and each relation ``r`` that ``s`` takes part in (in the
@@ -279,6 +292,11 @@ def unanswerable_candidates(con: Con, name: str) -> str:
     Every subgraph node ``y`` of such a type, other than a seed, with **no edge
     to s under any relation in the full graph**, is a candidate: "does s have
     relation r with y?" can't be answered from the graph.
+
+    ``absence_adj`` names the adjacency table absence is checked against. It is
+    ``adj`` except under a score filter, where it is the unfiltered
+    ``main.adj``: a pair with a low-scoring edge is left out of the filtered
+    store but is still not called unanswerable.
     """
     t = f"unans_{name}"
     con.execute(
@@ -296,7 +314,7 @@ def unanswerable_candidates(con: Con, name: str) -> str:
             WHERE sn.id NOT IN (SELECT id FROM seed)
         )
         SELECT c.* FROM cand c
-        ANTI JOIN adj ON adj.a = c.s AND adj.b = c.y
+        ANTI JOIN {absence_adj} x ON x.a = c.s AND x.b = c.y
         """
     )
     return t
@@ -323,7 +341,9 @@ def partial_candidates(con: Con, name: str) -> int:
     ).fetchone()[0]
 
 
-def contradiction_edges(con: Con, name: str, opposing: list[tuple[str, str]]) -> str:
+def contradiction_edges(
+    con: Con, name: str, opposing: list[tuple[str, str]], absence_adj: str = "adj"
+) -> str:
     """Create ``contra_<name>``: subgraph edges whose relation is one side of an opposing pair.
 
     ``opposing`` lists relation pairs that contradict each other (indication vs
@@ -331,7 +351,8 @@ def contradiction_edges(con: Con, name: str, opposing: list[tuple[str, str]]) ->
     absent). An edge with relation ``r`` between u and v contradicts a premise
     that asserts the opposite relation between them. Edges are kept only if
     they have an endpoint in N1, and only if the pair does **not** also carry
-    the opposite relation in the full graph (that pair would be ambiguous).
+    the opposite relation in the full graph (that pair would be ambiguous;
+    ``absence_adj`` as in :func:`unanswerable_candidates`).
     Columns: eid, rel, opposite, u, v, touches_seed.
     """
     t = f"contra_{name}"
@@ -349,17 +370,18 @@ def contradiction_edges(con: Con, name: str, opposing: list[tuple[str, str]]) ->
         JOIN opp o ON o.rel = e.rel
         WHERE (e.u IN (SELECT id FROM n1) OR e.v IN (SELECT id FROM n1))
           AND NOT EXISTS (
-            SELECT 1 FROM adj WHERE adj.a = e.u AND adj.b = e.v AND adj.rel = o.opposite
+            SELECT 1 FROM {absence_adj} x WHERE x.a = e.u AND x.b = e.v AND x.rel = o.opposite
           )
         """
     )
     return t
 
 
-def is_absent(con: Con, u: str, v: str) -> bool:
+def is_absent(con: Con, u: str, v: str, absence_adj: str = "adj") -> bool:
     """True if u and v share no edge under any relation in the full graph."""
     return (
-        con.execute("SELECT count(*) FROM adj WHERE a = ? AND b = ?", [u, v]).fetchone()[0] == 0
+        con.execute(f"SELECT count(*) FROM {absence_adj} WHERE a = ? AND b = ?", [u, v]).fetchone()[0]
+        == 0
     )
 
 
@@ -372,3 +394,257 @@ def balanced_capacity(counts: dict[str, int], target: int, cap_share: float = 0.
     """
     cap = cap_share * target
     return int(sum(min(n, cap) for n in counts.values()))
+
+
+# --------------------------------------------------------------------------
+# 6. Reported-only extras
+# --------------------------------------------------------------------------
+
+
+def seed_group_contributions(
+    con: Con,
+    facts: str,
+    groups: dict[str, list[str]],
+    target: int,
+    cap_share: float = 0.4,
+    min_facts: int = 30,
+) -> dict:
+    """What each disease in a multi-disease seed contributes to the single-hop pool (C1, C2).
+
+    ``facts`` is a ``facts_<name>`` table from :func:`single_hop_facts` built
+    for the **combined** seed; ``groups`` maps a disease label to its seed node
+    IDs. Groups may overlap (a node may be in two diseases' seeds). A fact
+    belongs to a group if either endpoint is one of the group's seed nodes, so
+    a fact between two diseases' seeds belongs to both, and a fact on a shared
+    seed node belongs to every group that holds the node. The combined pool
+    still counts each fact once.
+
+    Per group: its facts, facts by relation, distinct (partner, relation)
+    (partners outside the group's own seed),
+    facts no other group reaches, the C2 inputs on its own (relations with at
+    least ``min_facts`` facts; balanced capacity), and the C2 inputs of the
+    combined pool with the group left out. ``adds_*`` is combined minus
+    leave-one-out: what the group adds to C2 that the others don't already
+    supply. Also returns the pairwise overlap between groups, by seed node and
+    by (partner, relation), and the C2 inputs of each pair of groups taken
+    together (``pairs_c2``).
+
+    Reported only: it describes the pool and defines no new criterion.
+    """
+    con.execute("CREATE OR REPLACE TEMP TABLE seed_group(id VARCHAR, grp VARCHAR)")
+    rows = [(i, g) for g, ids in groups.items() for i in ids]
+    if rows:
+        con.executemany("INSERT INTO seed_group VALUES (?, ?)", rows)
+    # One row per (fact, group, partner): the partner is the end opposite the
+    # group's seed node. A fact between two of the group's own seed nodes has
+    # its partner inside the group; such facts count as facts but not as
+    # (partner, relation) pairs, mirroring the "distinct (partner, relation)"
+    # metric, which skips partners in the seed.
+    con.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE fact_group AS
+        SELECT DISTINCT f.eid, f.rel, g.grp,
+               CASE WHEN f.s = g.id THEN f.o ELSE f.s END AS partner,
+               EXISTS (SELECT 1 FROM seed_group h
+                       WHERE h.grp = g.grp AND h.id = CASE WHEN f.s = g.id THEN f.o ELSE f.s END
+               ) AS partner_in_group
+        FROM {facts} f JOIN seed_group g ON g.id IN (f.s, f.o)
+        """
+    )
+    all_by_rel = dict(con.execute(f"SELECT rel, count(*) FROM {facts} GROUP BY rel").fetchall())
+
+    def c2(by_rel: dict[str, int]) -> tuple[int, int]:
+        return sum(1 for n in by_rel.values() if n >= min_facts), balanced_capacity(by_rel, target, cap_share)
+
+    comb_rels, comb_bal = c2(all_by_rel)
+    out: dict = {"combined": {"facts": sum(all_by_rel.values()), "relations_ge_min": comb_rels,
+                              "balanced_capacity": comb_bal}, "groups": {}}
+    for g in groups:
+        by_rel = dict(con.execute(
+            "SELECT rel, count(DISTINCT eid) FROM fact_group WHERE grp = ? GROUP BY rel ORDER BY 2 DESC", [g]
+        ).fetchall())
+        n_facts = con.execute("SELECT count(DISTINCT eid) FROM fact_group WHERE grp = ?", [g]).fetchone()[0]
+        distinct_pr = con.execute(
+            "SELECT count(*) FROM (SELECT DISTINCT partner, rel FROM fact_group WHERE grp = ? AND NOT partner_in_group)",
+            [g],
+        ).fetchone()[0]
+        unique = con.execute(
+            """SELECT count(DISTINCT eid) FROM fact_group a WHERE grp = ?
+               AND NOT EXISTS (SELECT 1 FROM fact_group b WHERE b.eid = a.eid AND b.grp <> a.grp)""",
+            [g],
+        ).fetchone()[0]
+        # Leave-one-out: facts reached by some other group (or by no group, which
+        # can't happen when the groups cover the seed).
+        loo_by_rel = dict(con.execute(
+            f"""SELECT rel, count(*) FROM {facts} f
+                WHERE f.eid NOT IN (SELECT eid FROM fact_group WHERE grp = ?)
+                   OR f.eid IN (SELECT eid FROM fact_group WHERE grp <> ?)
+                GROUP BY rel""",
+            [g, g],
+        ).fetchall())
+        own_rels, own_bal = c2(by_rel)
+        loo_rels, loo_bal = c2(loo_by_rel)
+        out["groups"][g] = {
+            "seed_nodes": len(groups[g]),
+            "facts": n_facts,
+            "facts_by_relation": by_rel,
+            "distinct_partner_relation": distinct_pr,
+            "facts_only_this_group": unique,
+            "relations_ge_min": own_rels,
+            "balanced_capacity": own_bal,
+            "without_relations_ge_min": loo_rels,
+            "without_balanced_capacity": loo_bal,
+            "adds_relations_ge_min": comb_rels - loo_rels,
+            "adds_balanced_capacity": comb_bal - loo_bal,
+        }
+    names = list(groups)
+    overlap = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            shared_nodes = sorted(set(groups[a]) & set(groups[b]))
+            shared_pr, union_pr = con.execute(
+                """WITH x AS (SELECT DISTINCT partner, rel FROM fact_group WHERE grp = ? AND NOT partner_in_group),
+                        y AS (SELECT DISTINCT partner, rel FROM fact_group WHERE grp = ? AND NOT partner_in_group)
+                   SELECT (SELECT count(*) FROM (SELECT * FROM x INTERSECT SELECT * FROM y)),
+                          (SELECT count(*) FROM (SELECT * FROM x UNION SELECT * FROM y))""",
+                [a, b],
+            ).fetchone()
+            shared_facts = con.execute(
+                """SELECT count(*) FROM (SELECT eid FROM fact_group WHERE grp = ?
+                   INTERSECT SELECT eid FROM fact_group WHERE grp = ?)""",
+                [a, b],
+            ).fetchone()[0]
+            overlap.append({
+                "a": a, "b": b, "shared_seed_nodes": shared_nodes, "shared_facts": shared_facts,
+                "shared_partner_relation": shared_pr,
+                "jaccard_partner_relation": shared_pr / union_pr if union_pr else 0.0,
+            })
+    out["overlap"] = overlap
+    # C2 inputs for each pair of groups' combined facts (for example
+    # Alzheimer's plus one other disease). C2 only: no other criterion is
+    # recomputed for a subset, so these say nothing about pass/fail overall.
+    pairs = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            by_rel = dict(con.execute(
+                "SELECT rel, count(DISTINCT eid) FROM fact_group WHERE grp IN (?, ?) GROUP BY rel", [a, b]
+            ).fetchall())
+            rels_ge, bal = c2(by_rel)
+            pairs.append({"a": a, "b": b, "facts": sum(by_rel.values()),
+                          "relations_ge_min": rels_ge, "balanced_capacity": bal})
+    out["pairs_c2"] = pairs
+    return out
+
+
+def apply_score_filter(con: Con, min_score: float, scored_rels: list[str]) -> None:
+    """Shadow ``edges`` and ``adj`` with a copy that drops low-scoring edges.
+
+    Edges of a relation in ``scored_rels`` are kept only if ``score >=
+    min_score`` (an edge of such a relation with no score is dropped). Edges of
+    other relations are untouched. The filtered tables go in schema ``filt``,
+    and the search path becomes ``filt, main``: every function in this module
+    then reads the filtered ``edges``/``adj`` while ``nodes`` and ``deg`` (the
+    full graph's degrees, so hub-pruning caps don't move) fall back to
+    ``main``. New tables (seed, subgraphs) are created in ``filt``.
+
+    Absence checks must then be pointed at the unfiltered adjacency with
+    ``absence_adj="main.adj"``. Undo with :func:`clear_score_filter`.
+    Reported-only sensitivity: the pass/fail table never uses it.
+    """
+    con.execute("SET search_path = 'main'")
+    con.execute("DROP SCHEMA IF EXISTS filt CASCADE")
+    con.execute("CREATE SCHEMA filt")
+    con.execute(
+        """
+        CREATE TABLE filt.edges AS SELECT * FROM main.edges
+        WHERE NOT list_contains(?::VARCHAR[], rel) OR coalesce(score >= ?, false)
+        """,
+        [scored_rels, min_score],
+    )
+    con.execute("CREATE TABLE filt.adj AS SELECT a.* FROM main.adj a SEMI JOIN filt.edges e ON e.eid = a.eid")
+    con.execute("SET search_path = 'filt,main'")
+
+
+def clear_score_filter(con: Con) -> None:
+    """Drop the ``filt`` schema made by :func:`apply_score_filter` and restore the search path."""
+    con.execute("SET search_path = 'main'")
+    con.execute("DROP SCHEMA IF EXISTS filt CASCADE")
+
+
+def same_type_relations(con: Con) -> dict[str, dict]:
+    """Relations with at least one edge joining two nodes of the same type.
+
+    Maps each such relation to its most common same-type node type, the
+    number of its edges that join two nodes of one type, and its total edge
+    count. A relation can be mixed: OptimusKG's ``DIS-DIS/PARENT`` also holds
+    some phenotype -> disease edges. Only the same-type edges can be read in
+    two different directions; the types fix the reading of the rest.
+    """
+    rows = con.execute(
+        """
+        WITH t AS (
+            SELECT e.rel, nu.type AS tu, nv.type AS tv
+            FROM edges e JOIN nodes nu ON nu.id = e.u JOIN nodes nv ON nv.id = e.v
+        )
+        SELECT rel, count(*) AS n, count(*) FILTER (WHERE tu = tv) AS same,
+               mode(tu) FILTER (WHERE tu = tv) AS typ
+        FROM t GROUP BY rel HAVING count(*) FILTER (WHERE tu = tv) > 0
+        """
+    ).fetchall()
+    return {rel: {"type": typ, "same_type_edges": same, "edges": n} for rel, n, same, typ in rows}
+
+
+def direction_inversions(con: Con, name: str, rels: list[str]) -> dict:
+    """For directional same-type relations, count subgraph facts whose reversed reading is a different fact.
+
+    ``rels`` are relations between nodes of one type whose meaning has a
+    direction (parent-child, is_a). For such an edge between a and b,
+    "(a, r, b)" and "(b, r, a)" are different claims, so a direction-insensitive
+    support check would accept the reversed one. Per relation:
+
+    - ``edges``: its edges in subgraph ``name``;
+    - ``single_hop_facts``: those with an endpoint in the seed;
+    - ``stored_directed``: how many the source stores with a direction;
+    - ``reverse_also_present``: directed edges whose reverse is also an edge of
+      the same relation in the full graph (the reversed claim is then true and
+      no harm is done);
+    - ``reversed_reading_differs``: edges where the reversed claim is a
+      different, unsupported fact. For edges stored undirected (PrimeKG) every
+      edge counts, since the file can't say which reading is true.
+
+    Only edges whose two ends have the same type are counted (see
+    :func:`same_type_relations`). Needs ``facts_<name>`` from
+    :func:`single_hop_facts`.
+    """
+    out = {}
+    for rel in rels:
+        row = con.execute(
+            f"""
+            WITH s AS (
+                SELECT e.* FROM edges e JOIN sub_{name} USING (eid)
+                JOIN nodes nu ON nu.id = e.u JOIN nodes nv ON nv.id = e.v
+                WHERE e.rel = ? AND nu.type = nv.type
+            )
+            SELECT count(*),
+                   count(*) FILTER (WHERE eid IN (SELECT eid FROM facts_{name})),
+                   count(*) FILTER (WHERE directed),
+                   count(*) FILTER (WHERE directed AND EXISTS (
+                       SELECT 1 FROM edges r WHERE r.rel = s.rel AND r.directed
+                         AND r.u = s.v AND r.v = s.u)),
+                   count(*) FILTER (WHERE eid IN (SELECT eid FROM facts_{name}) AND (NOT directed OR NOT EXISTS (
+                       SELECT 1 FROM edges r WHERE r.rel = s.rel AND r.directed
+                         AND r.u = s.v AND r.v = s.u)))
+            FROM s
+            """,
+            [rel],
+        ).fetchone()
+        n, n_fact, n_dir, n_both, fact_differs = row
+        out[rel] = {
+            "edges": n,
+            "single_hop_facts": n_fact,
+            "stored_directed": n_dir,
+            "reverse_also_present": n_both,
+            "reversed_reading_differs": n - n_both,
+            "single_hop_reversed_reading_differs": fact_differs,
+        }
+    return out

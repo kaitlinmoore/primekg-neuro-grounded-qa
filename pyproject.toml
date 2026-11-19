@@ -36,6 +36,9 @@ data = [
 # uv warns on every sync and falls back to copying anyway. Setting it makes the
 # copy explicit and silences the warning.
 link-mode = "copy"
+# A plain `uv sync` installs the data group too, so tests/data runs instead of
+# being skipped for want of duckdb.
+default-groups = ["dev", "data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
