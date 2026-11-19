@@ -7,7 +7,8 @@ gold straight off the trace, and nothing has to be joined back in by ID.
 
 Gold comes from the graph, computed in code. Each gold point is a triple in the same
 shape as a model claim (entity IDs plus the graph's relation label), so coverage is
-checked with ``contracts.facts.same_fact``.
+checked with ``contracts.facts.same_fact``: in either direction, or in order when the
+gold point is flagged ``directed``.
 """
 
 from __future__ import annotations
@@ -70,8 +71,15 @@ class GoldPoint(BaseModel):
     """One fact a complete answer should state, as a graph triple.
 
     Same shape as a model ``Claim`` (subject ID, the graph's relation label, object
-    ID), so coverage is ``same_fact`` (direction-insensitive). ``evidence`` lists the
-    evidence IDs that state this fact: at least one, since gold comes from the graph.
+    ID), so coverage is ``same_fact``. ``evidence`` lists the evidence IDs that state
+    this fact: at least one, since gold comes from the graph.
+
+    ``directed``: when True, subject → object order is meaningful under the
+    relation's documented convention, and a claim covers this point only in that
+    order; otherwise either order counts. The data lane sets it, normalizing each
+    directed relation to one convention (for hierarchies: subject = child or
+    narrower term, object = parent or broader term). It should match the flag on the
+    evidence edges. The contracts encode no relation names.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -81,6 +89,7 @@ class GoldPoint(BaseModel):
     relation: str = Field(min_length=1)
     object_id: str = Field(min_length=1)
     evidence: list[str] = Field(min_length=1)
+    directed: bool = False
 
     @field_validator("evidence")
     @classmethod
@@ -95,6 +104,12 @@ class PremiseTriple(BaseModel):
 
     Code has verified that the graph has no edge stating it. Recorded so the reward
     and the audit can check whether a model asserted the premise anyway.
+
+    ``directed``: when True, subject → object order is meaningful under the
+    relation's documented convention (set by the data lane, as for ``GoldPoint``), so
+    the premise is compared in order. The reverse of a directed fact is a different
+    fact, so a premise may be the reverse of a directed gold point: "A is a subtype
+    of B" when the graph says B is a subtype of A is a legitimate false premise.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -102,6 +117,7 @@ class PremiseTriple(BaseModel):
     subject_id: str = Field(min_length=1)
     relation: str = Field(min_length=1)
     object_id: str = Field(min_length=1)
+    directed: bool = False
 
 
 class QuestionItem(vf.TaskData):
@@ -120,7 +136,8 @@ class QuestionItem(vf.TaskData):
     - Every evidence ID is well-formed, and each gold point's evidence is a subset
       of ``gold_evidence``.
     - ``premise`` is set exactly when ``qtype="false_premise"``, and never states the
-      same fact as a gold point.
+      same fact as a gold point (by ``same_fact``, so the reverse of a directed gold
+      point is allowed).
 
     For ``correctable`` items the gold points hold the correction, as ordinary
     triples; the output schema needs nothing extra, since a correction is just cited

@@ -9,6 +9,7 @@ from neuro_grounded_qa.contracts import (
     Entity,
     EvidenceStore,
     InMemoryEvidenceStore,
+    ToolResultPayload,
     evidence_kind,
     is_evidence_id,
 )
@@ -88,6 +89,15 @@ def test_edge_json_round_trip():
     assert EdgeEvidence.model_validate_json(edge.model_dump_json()) == edge
 
 
+def test_edge_directed_defaults_to_false():
+    edge = EdgeEvidence(id="E:000001", subject=A, relation="associated_with", object=D)
+    assert edge.directed is False
+    directed = EdgeEvidence(
+        id="E:000002", subject=D, relation="subtype_of", object=D, directed=True
+    )
+    assert EdgeEvidence.model_validate_json(directed.model_dump_json()) == directed
+
+
 # --- store -------------------------------------------------------------------
 
 
@@ -98,7 +108,7 @@ def store():
 
 def test_fixture_store_satisfies_protocol(store):
     assert isinstance(store, EvidenceStore)
-    assert len(store) == 12
+    assert len(store) == 13
 
 
 def test_protocol_requires_entity_and_build_id():
@@ -137,7 +147,7 @@ def test_entity_lookup(store):
 
 
 def test_get_round_trip(store):
-    for eid in [f"E:{n:06d}" for n in range(1, 13)]:
+    for eid in [f"E:{n:06d}" for n in range(1, 14)]:
         edge = store.get(eid)
         assert edge is not None and edge.id == eid
     assert store.get("E:999999") is None
@@ -149,7 +159,9 @@ def test_search_is_case_insensitive_substring_with_stable_order(store):
     assert [e.id for e in store.search_entities("gene", 10)] == [
         "GENE_A", "GENE_B", "GENE_D", "GENE_C",
     ]  # all prefix matches, ordered by name: Alpha, Beta, Delta, Gamma
-    assert [e.id for e in store.search_entities("DISEASE", 10)] == ["DIS_1", "DIS_2"]
+    assert [e.id for e in store.search_entities("DISEASE", 10)] == [
+        "DIS_G", "DIS_1", "DIS_3", "DIS_2",
+    ]  # Group G, One, Three, Two
     assert [e.id for e in store.search_entities("one", 10)] == ["DIS_1"]
     assert store.search_entities("gene", 2) == store.search_entities("gene", 10)[:2]
 
@@ -196,6 +208,7 @@ def test_relations_is_sorted_closed_vocabulary(store):
         "indicated_for",
         "interacts_with",
         "member_of",
+        "subtype_of",
         "targets",
     ]
 
@@ -221,3 +234,50 @@ def test_from_records_rejects_dangling_entity():
     }
     with pytest.raises(ValueError, match="unknown"):
         InMemoryEvidenceStore.from_records(data)
+
+
+# --- directed edges ------------------------------------------------------------
+
+
+def test_from_records_reads_directed_defaulting_to_false(store):
+    assert store.get("E:000013").directed is True  # DIS_3 subtype_of DIS_G
+    # Every other fixture edge omits the key, so it defaults to undirected.
+    ids = [f"E:{n:06d}" for n in range(1, 14)]
+    assert [eid for eid in ids if store.get(eid).directed] == ["E:000013"]
+    data = {
+        "entities": [A.model_dump(), D.model_dump()],
+        "edges": [
+            {"id": "E:000001", "subject": "GENE_A", "relation": "r", "object": "DIS_1"},
+            {"id": "E:000002", "subject": "GENE_A", "relation": "r2", "object": "DIS_1",
+             "directed": False},
+        ],
+    }
+    s = InMemoryEvidenceStore.from_records(data)
+    assert s.get("E:000001").directed is False
+    assert s.get("E:000002").directed is False
+
+
+def test_payload_round_trip_keeps_directed(store):
+    edges = [store.get("E:000013"), store.get("E:000001")]
+    reloaded = ToolResultPayload.loads(ToolResultPayload(evidence=edges).dumps())
+    assert [e.directed for e in reloaded.evidence] == [True, False]
+    assert reloaded.evidence == edges
+
+
+def test_payload_without_directed_key_parses_as_undirected():
+    # Payloads written before the flag existed still parse under the strict loader.
+    raw = (
+        '{"evidence": [{"id": "E:000001", "kind": "edge", '
+        '"subject": {"id": "GENE_A", "name": "Gene Alpha", "type": "gene", "source": null}, '
+        '"relation": "associated_with", "display_relation": null, '
+        '"object": {"id": "DIS_1", "name": "Disease One", "type": "disease", "source": null}}], '
+        '"entities": [], "truncated": false, "note": null}'
+    )
+    assert ToolResultPayload.loads(raw).evidence[0].directed is False
+
+
+def test_directed_must_be_a_real_bool_in_payloads():
+    edge = EdgeEvidence(id="E:000001", subject=A, relation="r", object=D, directed=True)
+    raw = ToolResultPayload(evidence=[edge]).dumps().replace('"directed":true', '"directed":"true"')
+    with pytest.raises(ValidationError):
+        ToolResultPayload.loads(raw)
