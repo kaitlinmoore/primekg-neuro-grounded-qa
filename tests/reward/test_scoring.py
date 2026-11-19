@@ -336,6 +336,34 @@ def test_duplicate_with_no_supported_copy_is_one_unsupported_fact():
     assert b.reward == pytest.approx(0.5 - 0.5 * 1 / 2)
 
 
+def test_reversed_directed_claim_is_not_a_duplicate():
+    """E:000013 is the fixture's one directed edge (DIS_3 subtype_of DIS_G). Its
+    reversal is a different, false fact: it must stay its own unsupported fact, not
+    hide in the correct claim's group."""
+    right = claim("DIS_3", "subtype_of", "DIS_G", "E:000013")
+    reversed_ = claim("DIS_G", "subtype_of", "DIS_3", "E:000013")
+    b = run(SINGLE, answer(GP1, GP2, right, reversed_), retrieved=evidence("E:000001", "E:000002", "E:000013"))
+    assert b.n_facts == 4 and b.n_duplicates == 0
+    assert b.claims[2].supported and not b.claims[3].supported
+    assert (b.n_supported, b.n_unsupported) == (3, 1)
+    assert b.penalty == pytest.approx(0.5 * 1 / 4)
+
+
+def test_directed_claim_repeated_in_order_is_a_duplicate():
+    right = claim("DIS_3", "subtype_of", "DIS_G", "E:000013")
+    b = run(SINGLE, answer(GP1, GP2, right, right), retrieved=evidence("E:000001", "E:000002", "E:000013"))
+    assert b.n_facts == 3 and b.n_duplicates == 1
+
+
+def test_directed_relations_come_from_retrieved_edges_and_the_item():
+    assert scoring.directed_relations(SINGLE, evidence("E:000001", "E:000013")) == {"subtype_of"}
+    assert scoring.directed_relations(SINGLE, evidence("E:000001")) == frozenset()
+    item = SINGLE.model_copy(
+        update={"gold_points": [SINGLE.gold_points[0].model_copy(update={"directed": True})]}
+    )
+    assert scoring.directed_relations(item, {}) == {"associated_with"}
+
+
 def test_same_entities_different_relation_are_different_facts():
     other = claim("GENE_A", "member_of", "DIS_1", "E:000001")  # wrong relation
     b = run(SINGLE, answer(GP1, other))

@@ -33,16 +33,23 @@ Components, each its own small function below:
 ``aggregate`` combines them per ``answerable`` value and clips to [0, 1].
 
 Two rules keep the audit honest. Triples are never compared directly: every
-comparison goes through ``supports``/``same_fact`` from ``contracts.facts``, so a
-change there (for example a per-relation directedness flag) flows through here
-unchanged. And the retrieved set is only ever the ``retrieved`` argument: nothing
-here reads IDs from the model's text.
+comparison goes through ``supports``/``same_fact`` from ``contracts.facts``, so the
+direction rule lives in one place. Facts match in either order, except facts flagged
+``directed`` (hierarchy relations), which match in order only. And the retrieved set
+is only ever the ``retrieved`` argument: nothing here reads IDs from the model's text.
+
+**Direction when comparing two claims.** Claims carry no ``directed`` flag, so
+``same_fact(claim, claim)`` would match a directed fact and its reversal. Deduplication
+(``group_facts``) therefore takes direction from the relation label: a relation is
+directed if any retrieved edge, gold point or premise with that label is flagged
+(``directed_relations``), and claims with that label are compared in order. Claim vs
+edge, gold point or premise needs nothing extra: those carry their own flag.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Callable, Literal
 
@@ -209,8 +216,8 @@ def supporting_citation(
 
     A valid citation that doesn't state the claim doesn't support it. The check is
     dispatched on the evidence's ``kind`` (``SUPPORT_CHECKERS``); for edges it is
-    ``contracts.supports``, which matches the triple in either direction with an
-    identical relation label.
+    ``contracts.supports``: an identical relation label, and the entity IDs in either
+    order, or in stored order only if the edge is flagged ``directed``.
     """
     for cite in valid_cites:
         evidence = retrieved[cite]
@@ -245,17 +252,55 @@ def check_claims(
     return tuple(checks)
 
 
-def group_facts(checks: tuple[ClaimCheck, ...]) -> tuple[FactGroup, ...]:
+@dataclass(frozen=True)
+class _OrientedClaim:
+    """A claim's triple plus a ``directed`` flag, so ``same_fact`` can compare two
+    claims in order. ``contracts.is_directed`` reads the flag."""
+
+    subject_id: str
+    relation: str
+    object_id: str
+    directed: bool
+
+
+def directed_relations(
+    item: QuestionItem, retrieved: Mapping[str, Evidence]
+) -> frozenset[str]:
+    """Relation labels known to be directed for this score: any retrieved edge, gold
+    point or premise with that label is flagged ``directed``.
+
+    Used only to compare claims with each other, since claims carry no flag. Item
+    validation already rejects mixed flags on one relation within an item, and the
+    data builder sets the flag per relation.
+    """
+    flagged: Iterable[tuple[str, bool]] = (
+        *((e.relation, e.directed) for e in retrieved.values() if isinstance(e, EdgeEvidence)),
+        *((gp.relation, gp.directed) for gp in item.gold_points),
+        *(((item.premise.relation, item.premise.directed),) if item.premise is not None else ()),
+    )
+    return frozenset(relation for relation, directed in flagged if directed)
+
+
+def group_facts(
+    checks: tuple[ClaimCheck, ...], directed: frozenset[str] = frozenset()
+) -> tuple[FactGroup, ...]:
     """Collapse claims that state the same fact into one ``FactGroup`` each.
 
     Groups are in order of each fact's first claim. Every comparison goes through
-    ``contracts.same_fact``, so reversed restatements of an undirected fact are
-    duplicates, and a future directedness flag flows through unchanged.
+    ``contracts.same_fact``. Reversed restatements of an undirected fact are
+    duplicates. Claims whose relation is in ``directed`` (see
+    :func:`directed_relations`) are compared in order, so a directed fact and its
+    reversal stay two facts: the reversal can't hide inside the correct claim's group.
     """
+
+    def oriented(check: ClaimCheck) -> _OrientedClaim:
+        c = check.claim
+        return _OrientedClaim(c.subject_id, c.relation, c.object_id, c.relation in directed)
+
     groups: list[list[ClaimCheck]] = []
     for check in checks:
         for group in groups:
-            if same_fact(check.claim, group[0].claim):
+            if same_fact(oriented(check), oriented(group[0])):
                 group.append(check)
                 break
         else:
@@ -465,7 +510,7 @@ def score(
         outcome = "answer"
 
     checks = check_claims(parsed, retrieved, item) if isinstance(parsed, Answer) else ()
-    facts = group_facts(checks)
+    facts = group_facts(checks, directed_relations(item, retrieved))
     n_claims = len(checks)
     n_supported = sum(f.supported for f in facts)
     n_unsupported = len(facts) - n_supported
