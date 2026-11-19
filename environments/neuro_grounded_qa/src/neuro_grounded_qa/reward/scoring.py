@@ -41,9 +41,10 @@ is only ever the ``retrieved`` argument: nothing here reads IDs from the model's
 **Direction when comparing two claims.** Claims carry no ``directed`` flag, so
 ``same_fact(claim, claim)`` would match a directed fact and its reversal. Deduplication
 (``group_facts``) therefore takes direction from the relation label: a relation is
-directed if any retrieved edge, gold point or premise with that label is flagged
-(``directed_relations``), and claims with that label are compared in order. Claim vs
-edge, gold point or premise needs nothing extra: those carry their own flag.
+directed if any retrieved edge, gold point, premise or graph gap triple with that
+label is flagged (``directed_relations``), and claims with that label are compared in
+order. Claim vs edge, gold point or premise needs nothing extra: those carry their own
+flag.
 """
 
 from __future__ import annotations
@@ -267,7 +268,10 @@ def directed_relations(
     item: QuestionItem, retrieved: Mapping[str, Evidence]
 ) -> frozenset[str]:
     """Relation labels known to be directed for this score: any retrieved edge, gold
-    point or premise with that label is flagged ``directed``.
+    point, premise or graph gap triple with that label is flagged ``directed``.
+
+    Gap triples count too: a relation can appear in an item only as a gap (the absent
+    fact) and in no retrieved edge, and two reversed claims on it are still two facts.
 
     Used only to compare claims with each other, since claims carry no flag. Item
     validation already rejects mixed flags on one relation within an item, and the
@@ -277,6 +281,7 @@ def directed_relations(
         *((e.relation, e.directed) for e in retrieved.values() if isinstance(e, EdgeEvidence)),
         *((gp.relation, gp.directed) for gp in item.gold_points),
         *(((item.premise.relation, item.premise.directed),) if item.premise is not None else ()),
+        *((g.triple.relation, g.triple.directed) for g in item.graph_gaps if g.triple is not None),
     )
     return frozenset(relation for relation, directed in flagged if directed)
 

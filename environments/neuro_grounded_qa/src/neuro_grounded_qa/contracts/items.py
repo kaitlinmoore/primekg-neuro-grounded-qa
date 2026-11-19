@@ -29,7 +29,7 @@ Answerable = Literal["yes", "partial", "correctable", "no"]
 
 - ``yes``: a full answer.
 - ``partial``: part of the question; the rest should be named as unsupported. The
-  item records which part in ``unsupported_part``.
+  item records which parts in ``graph_gaps``.
 - ``correctable``: the question rests on a false premise that an edge contradicts.
   Abstaining and a cited correction are both correct.
 - ``no``: nothing; only abstaining is correct.
@@ -121,28 +121,31 @@ class PremiseTriple(BaseModel):
     directed: bool = False
 
 
-class UnsupportedPart(BaseModel):
-    """The part of a question the graph can't support, recorded on the item.
+class GraphGap(BaseModel):
+    """One part of a partial question that the graph can't support.
 
-    Required on ``partial`` items and allowed on ``correctable`` ones (see
-    ``QuestionItem``). It says what a model's flag (``Answer.unsupported_parts``)
-    should have named, so grading, and any later check of flag text, can judge
-    whether the flag named the right part. Reward v0 doesn't read it: a partial
-    answer earns the flag credit for any non-blank flag.
+    Recorded on ``partial`` items only, in ``QuestionItem.graph_gaps`` (at least one
+    per partial item). A gap is a fact about the item: what the graph lacks. It is
+    kept apart, in name too, from the output field ``Answer.unsupported_parts``,
+    which is what the model flagged. Recording the gaps lets grading, and any later
+    check of flag text, judge whether a model's flags named the right parts. Reward
+    v0 doesn't score against them: a partial answer earns the flag credit for any
+    non-blank flag. (It does read gap triples' ``directed`` flags, to compare claims
+    with each other; see ``reward.scoring.directed_relations``.)
 
     - ``description``: what the question asks that the graph doesn't support, in
       plain words. Must not be blank.
-    - ``triple``: the specific absent fact, when the unsupported part is one
-      checkable triple; None when it isn't (for example, the question asks for an
-      unknown entity, so there is no single triple to name). Same shape as a
-      premise, ``directed`` flag included.
+    - ``triple``: the specific absent fact, when the gap is one checkable triple;
+      None when it isn't (for example, the question asks for an unknown entity, so
+      there is no single triple to name). Same shape as a premise, ``directed`` flag
+      included.
 
-    The contract can only check the triple against the item itself: it never states
-    the same fact as a gold point, and its ``directed`` flag agrees with the item's
-    other triples on the same relation. Whether the graph really lacks it can't be
-    checked here (an item has no store). The question generator must check the
-    triple's absence against the **full** graph, not just the subgraph, as for false
-    premises.
+    The contract can only check a triple against the item itself: it never states the
+    same fact as a gold point or another gap's triple, and its ``directed`` flag
+    agrees with the item's other triples on the same relation. Whether the graph
+    really lacks it can't be checked here (an item has no store). The question
+    generator must check each triple's absence against the **full** graph, not just
+    the subgraph, as for false premises.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -154,7 +157,7 @@ class UnsupportedPart(BaseModel):
     @classmethod
     def _description_not_blank(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("unsupported_part description must not be blank")
+            raise ValueError("graph gap description must not be blank")
         return v
 
 
@@ -176,14 +179,15 @@ class QuestionItem(vf.TaskData):
     - ``premise`` is set exactly when ``qtype="false_premise"``, and never states the
       same fact as a gold point (by ``same_fact``, so the reverse of a directed gold
       point is allowed).
-    - ``unsupported_part`` is required when ``answerable="partial"``, allowed when
-      ``answerable="correctable"`` and forbidden otherwise. Its triple, if any, never
-      states the same fact as a gold point (by ``same_fact``).
-    - All triples on one relation label (the gold points, the premise and the
-      unsupported part's triple) share one ``directed`` value. Mixed flags would let the item validate while the reward
-      compares the same relation in order in one place and in either order in
-      another. Whether the flags also match the store's edges can't be checked here
-      (an item has no store); the data lane's builder checks that.
+    - ``graph_gaps`` is non-empty when ``answerable="partial"`` and empty otherwise
+      (on ``correctable`` items the premise already names what's wrong). No gap
+      triple states the same fact as a gold point or as another gap's triple (by
+      ``same_fact``).
+    - All triples on one relation label (the gold points, the premise and the gap
+      triples) share one ``directed`` value. Mixed flags would let the item validate
+      while the reward compares the same relation in order in one place and in
+      either order in another. Whether the flags also match the store's edges can't
+      be checked here (an item has no store); the data lane's builder checks that.
 
     For ``correctable`` items the gold points hold the correction, as ordinary
     triples; the output schema needs nothing extra, since a correction is just cited
@@ -191,8 +195,8 @@ class QuestionItem(vf.TaskData):
     the reward's decision, not fixed here.
 
     For ``partial`` items the gold points hold only the answerable part, and
-    ``unsupported_part`` names the rest. The absence of its triple from the graph is
-    the generator's check, not the contract's (see ``UnsupportedPart``).
+    ``graph_gaps`` names the rest. The absence of gap triples from the graph is the
+    generator's check, not the contract's (see ``GraphGap``).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -207,9 +211,9 @@ class QuestionItem(vf.TaskData):
     """Every evidence ID that supports the gold answer."""
     premise: PremiseTriple | None = None
     """The false premise; required for ``false_premise`` items, forbidden otherwise."""
-    unsupported_part: UnsupportedPart | None = None
-    """What the graph can't support; required for ``answerable="partial"``, allowed
-    for ``"correctable"``, forbidden otherwise."""
+    graph_gaps: list[GraphGap] = Field(default_factory=list)
+    """The parts of the question the graph can't support; non-empty for
+    ``answerable="partial"``, empty otherwise."""
     source: ItemSource
     split: Split
     template_id: str | None = None
@@ -245,38 +249,35 @@ class QuestionItem(vf.TaskData):
                 )
         if (self.qtype == "false_premise") != (self.premise is not None):
             raise ValueError("premise is required for false_premise items only")
-        if self.answerable == "partial" and self.unsupported_part is None:
-            raise ValueError('answerable="partial" items need an unsupported_part')
-        if self.unsupported_part is not None and self.answerable not in (
-            "partial",
-            "correctable",
-        ):
+        if (self.answerable == "partial") != bool(self.graph_gaps):
             raise ValueError(
-                "unsupported_part is allowed only on partial and correctable items, "
-                f'not answerable="{self.answerable}"'
+                'graph_gaps must be non-empty for answerable="partial" items and empty '
+                f'otherwise; got {len(self.graph_gaps)} on answerable="{self.answerable}"'
             )
-        absent = self.unsupported_part.triple if self.unsupported_part else None
+        gap_triples = [g.triple for g in self.graph_gaps if g.triple is not None]
         flags: dict[str, bool] = {}
         triples = [
             *self.gold_points,
             *([self.premise] if self.premise else []),
-            *([absent] if absent else []),
+            *gap_triples,
         ]
         for t in triples:
             if flags.setdefault(t.relation, t.directed) != t.directed:
                 raise ValueError(
                     f"mixed directed flags on relation {t.relation!r}: every gold point, "
-                    "the premise and the unsupported part's triple on one relation must "
-                    "share one directed value"
+                    "the premise and every graph gap triple on one relation must share "
+                    "one directed value"
                 )
         if self.premise is not None:
             for gp in self.gold_points:
                 if same_fact(self.premise, gp):
                     raise ValueError(f"premise states the same fact as gold point {gp.id!r}")
-        if absent is not None:
+        for i, t in enumerate(gap_triples):
             for gp in self.gold_points:
-                if same_fact(absent, gp):
+                if same_fact(t, gp):
                     raise ValueError(
-                        f"unsupported_part triple states the same fact as gold point {gp.id!r}"
+                        f"a graph gap triple states the same fact as gold point {gp.id!r}"
                     )
+            if any(same_fact(t, other) for other in gap_triples[:i]):
+                raise ValueError("two graph gap triples state the same fact")
         return self
