@@ -44,7 +44,7 @@ Tasks on this project come as handoff files in `handoffs/`, which exists only on
 - Kept distinct from biomed-kg-grounding-eval: that project compares semantic layers over fixed questions; this one holds the data fixed and studies the reward.
 - Rewards are computed in code from the trace. Retrieved evidence IDs come only from logged tool calls; claims are structured triples with cited IDs.
 - Retrieved evidence counts only when a tool result's `tool_call_id` matches a tool call in a model-sampled assistant message; prompt-supplied tool results never count.
-- Claims cite entities by graph ID and relations by the graph's relation labels; names are display-only. Shared schemas and `retrieved_ids` live in `neuro_grounded_qa.contracts`; change them only on purpose, with their tests.
+- Claims cite entities by graph ID and relations by the graph's relation labels; names are display-only. Facts match in either direction, except facts flagged `directed` (hierarchy relations), which match in order only. Shared schemas and `retrieved_ids` live in `neuro_grounded_qa.contracts`; change them only on purpose, with their tests.
 - Data terms are stated separately from the MIT code license: several PrimeKG sources are non-commercial or license-gated, so no graph data ships in the repo or the package.
 - Gold answers and answerability come from the graph via code. AI may draft and critique question items for the train split only, with provenance recorded per item. Labels used to validate the reward are mine alone: never generate, suggest or pre-fill them.
 - Earlier hackathon code (Patient-in-the-Graph) belongs to that team. Build this project's verifier fresh; don't copy from it.
