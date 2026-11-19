@@ -166,9 +166,10 @@ class EvidenceStore(Protocol):
     def build_id(self) -> str:
         """Which graph build this store holds: graph name, version and build hash.
 
-        Evidence IDs are only meaningful within one build, so traces, items and
-        audit results record this to say which build their IDs refer to. The
-        format is the data lane's choice; the in-memory store uses ``"fixture"``.
+        Evidence IDs are only meaningful within one build, so anything that stores
+        IDs (question sets, run outputs, audit results) should record which build
+        they refer to. No contract carries it yet. The format is the data lane's
+        choice; the in-memory store defaults to ``"fixture"``.
         """
         ...
 
