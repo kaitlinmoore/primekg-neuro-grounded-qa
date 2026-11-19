@@ -1,18 +1,22 @@
 # Default run config for this project: keep runs on this machine.
 #
-# Use it with the `@` syntax, e.g.
-#   uv run vf-run neuro-grounded-qa @ configs/local.toml \
-#     -m <model> --client.base-url <endpoint-url> --client.api-key-var <ENV_VAR_NAME>
+# Model runs go through the wrapper, which adds this file:
+#   scripts/run.sh -m <model> --client.base-url <endpoint-url> \
+#     --client.api-key-var <ENV_VAR_NAME> [other vf-run options]
+# It runs `uv run vf-run neuro-grounded-qa @ configs/local.toml ...` from the repo
+# root, so the relative paths below resolve there.
 #
 # Why this file exists: by default verifiers 0.4.1 runs the agent in a Prime
 # sandbox and sends prompts to Prime Inference with a default model. This config
-# switches the agent to the local subprocess runtime.
+# switches the agent to the local subprocess runtime and pins the tool server to
+# it too.
 #
 # It deliberately sets NO model and NO endpoint. Every run must pass `-m`,
 # `--client.base-url` and `--client.api-key-var` explicitly, so the model and
 # where prompts go (including any held-out items) are always a visible choice.
-# Note: vf-run does NOT enforce this. If `-m` is omitted it silently falls back
-# to its built-in default model on Prime Inference.
+# vf-run itself does NOT enforce this: if `-m` is omitted it silently falls back
+# to its built-in default model on Prime Inference. scripts/run.sh refuses to
+# start without `-m` and `--client.base-url`.
 
 # Run outputs (configs/ and traces.jsonl per run) go here. Gitignored: traces can
 # contain question items, including held-out ones.
@@ -20,4 +24,24 @@ output_dir = "outputs"
 
 [env.agent.runtime]
 # Run the agent as a local subprocess instead of a Prime sandbox.
+type = "subprocess"
+
+[env.taskset]
+# Question items and the split to load. The defaults are the contracts' synthetic
+# fixtures, so a run works with no graph data. split = "heldout" is refused unless
+# allow_heldout = true is also set, deliberately, for the confirmatory run.
+items_path = "tests/fixtures/contracts/items.jsonl"
+split = "train"
+
+[env.taskset.tools]
+# The KG tool server: the evidence store it serves and its limits.
+store_path = "tests/fixtures/contracts/mini_store.json"
+max_results = 20       # most entities or edges per tool result
+max_calls = 8          # most KG tool calls per rollout
+paginate = false       # no `offset` on get_neighbors
+max_payload_bytes = 16000  # under the chat harness's 20000-byte tool-output cut
+
+[env.taskset.tools.runtime]
+# Run the tool server as a local subprocess. This is already verifiers' default
+# for tool servers; it is pinned here so it stays explicit.
 type = "subprocess"

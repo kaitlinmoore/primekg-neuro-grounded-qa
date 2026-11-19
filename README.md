@@ -33,14 +33,16 @@ uv run pytest
 # Validate the environment's tasks locally (no model, no agent)
 uv run vf-validate neuro-grounded-qa --runtime.type subprocess
 
-# Run with the project's local config. The model and endpoint are always explicit:
-# configs/local.toml sets neither, and vf-run falls back to its own default model
-# on Prime Inference if -m is omitted.
-uv run vf-run neuro-grounded-qa @ configs/local.toml -n 1 \
+# Model runs go through the wrapper. It refuses to start without -m and
+# --client.base-url (vf-run alone would fall back to its own default model on
+# Prime Inference), then runs vf-run with configs/local.toml from the repo root.
+scripts/run.sh -n 1 \
   -m <model> --client.base-url <endpoint-url> --client.api-key-var <ENV_VAR_NAME>
 ```
 
-Add `--dry-run True` to the `vf-run` command to resolve and write the config without running anything. Run outputs go to `outputs/` (gitignored).
+Add `--dry-run True` to the `scripts/run.sh` command to resolve and write the config without running anything. Other `vf-run` options pass through unchanged. Run outputs go to `outputs/` (gitignored).
+
+With no data configured, the environment runs on the synthetic fixtures in `tests/fixtures/contracts/`. `configs/local.toml` sets the question items (`[env.taskset]`) and the evidence store and tool limits (`[env.taskset.tools]`).
 
 ## Results, methodology
 
