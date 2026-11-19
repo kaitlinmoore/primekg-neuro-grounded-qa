@@ -1,0 +1,15 @@
+id,type,name,source
+D1,disease,disease one (group X),MONDO
+D2,disease,disease two (groups X and Y),MONDO
+D3,disease,disease three,MONDO
+D5,disease,disease five (group Y),MONDO
+D6,disease,disease six (group Z),MONDO
+D7,disease,disease seven (parent of D6),MONDO
+G1,gene,GENE1,NCBI
+G2,gene,GENE2,NCBI
+G3,gene,GENE3,NCBI
+G4,gene,GENE4,NCBI
+G5,gene,GENE5,NCBI
+P1,phenotype,phenotype one,HPO
+P2,phenotype,phenotype two,HPO
+R1,drug,drug one,DrugBank
