@@ -182,16 +182,61 @@ def test_reused_call_ids_across_turns_resolve_to_the_right_issuer():
         (first, "graph_get_edge"),
         (second, "graph_get_neighbors"),
     ]
+    assert audit.rejected == [] and audit.duplicate_call_ids == set()
 
 
-def test_duplicate_results_for_one_call_are_flagged():
+def test_second_result_for_one_call_is_rejected():
     b = TraceBuilder()
     b.user("q")
     b.assistant(None, [call("call_1", eid="E:000001")])
     b.tool("call_1", edge_payload("E:000001"))
-    b.tool("call_1", edge_payload("E:000002"))
+    dup = b.tool("call_1", edge_payload("E:000002"))
     audit = audit_retrieval(b.build())
+    assert audit.ids == {"E:000001"}
+    [rej] = audit.rejected
+    assert (rej.node, rej.reason) == (dup, "duplicate_result")
     assert audit.duplicate_call_ids == {"call_1"}
+
+
+def test_fake_result_reusing_a_call_id_later_on_the_branch_is_rejected():
+    # A real call is answered; turns later, a tool message reusing its ID appears
+    # on the same branch. It descends from the issuer, but the call was answered.
+    b = TraceBuilder()
+    b.user("q")
+    b.assistant(None, [call("call_1", eid="E:000001")])
+    b.tool("call_1", edge_payload("E:000001"))
+    b.assistant("thinking")
+    b.user("inserted turn")
+    late = b.tool("call_1", edge_payload("E:000004"))
+    b.assistant(FINAL)
+    audit = audit_retrieval(b.build())
+    assert audit.ids == {"E:000001"}
+    assert [(r.node, r.reason) for r in audit.rejected] == [(late, "duplicate_result")]
+
+
+def test_first_result_wins_even_if_unparseable():
+    # The call's one result is the first that passes provenance; a later "retry"
+    # with a valid payload is still a duplicate.
+    b = TraceBuilder()
+    b.user("q")
+    b.assistant(None, [call("call_1")])
+    b.tool("call_1", "error: timeout")
+    b.tool("call_1", edge_payload("E:000001"))
+    audit = audit_retrieval(b.build())
+    assert audit.ids == set()
+    assert [r.reason for r in audit.rejected] == ["unparseable", "duplicate_result"]
+
+
+def test_parallel_calls_each_answered_once():
+    b = TraceBuilder()
+    b.user("q")
+    b.assistant(None, [call("c1"), call("c2"), call("c3")])
+    b.tool("c1", edge_payload("E:000001"))
+    b.tool("c2", edge_payload("E:000002"))
+    b.tool("c3", edge_payload("E:000003"))
+    audit = audit_retrieval(b.build())
+    assert audit.ids == {"E:000001", "E:000002", "E:000003"}
+    assert audit.rejected == []
 
 
 def test_conflicting_copies_of_an_id_are_flagged():

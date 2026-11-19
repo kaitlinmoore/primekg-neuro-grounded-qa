@@ -11,15 +11,21 @@ audit rest on.
 1. Its ``tool_call_id`` matches a ``ToolCall.id`` in an assistant message that the
    model sampled (``MessageNode.sampled=True``).
 2. The tool message's node descends, through the ``parent`` chain, from the sampled
-   node that issued that call.
-3. Its content parses as a :class:`ToolResultPayload`.
+   node that issued that call. If several sampled ancestors issued the same ID
+   (providers that number calls per turn), the nearest one is the issuer.
+3. It is the first tool message, in node order, to answer that call (that issuer
+   node and call ID). A real harness sends one result per call; later ones are
+   rejected as duplicates.
+4. Its content parses as a :class:`ToolResultPayload`.
 
 Evidence IDs are then read from the payload's structure, never pattern-matched in
 free text. Why this strict: Verifiers' ``trace.tool_messages`` returns *every* tool
 message, including tool exchanges supplied in the prompt that the model never made,
 so a reward built on it pays out for evidence the model never fetched. Rule 1 drops
 prompt-supplied calls; rule 2 drops tool messages that reuse a real call's ID
-somewhere it doesn't belong (another branch, or before the call was made).
+somewhere it doesn't belong (another branch, or before the call was made); rule 3
+drops extra results for a call that was already answered, such as a fake result
+inserted later on the same branch.
 
 The rule is source-agnostic: any tool whose result uses the payload format
 contributes, not only graph tools. Phase 2's passage tool plugs in unchanged.
@@ -75,7 +81,11 @@ class ToolResultPayload(BaseModel):
 
 
 RejectionReason = Literal[
-    "no_matching_call", "call_not_sampled", "not_descendant", "unparseable"
+    "no_matching_call",
+    "call_not_sampled",
+    "not_descendant",
+    "duplicate_result",
+    "unparseable",
 ]
 """Why a tool message contributed no evidence.
 
@@ -85,6 +95,9 @@ RejectionReason = Literal[
   This is the prompt-injected tool result case.
 - ``not_descendant``: a sampled message issued the ID, but this tool message isn't
   below it in the message graph.
+- ``duplicate_result``: the call was already answered by an earlier tool message
+  (the first one in node order that passed the provenance checks, whether or not
+  its content parsed).
 - ``unparseable``: provenance is fine, but the content isn't a ``ToolResultPayload``.
   Expected for tools that don't return evidence (for example a shell tool), so read
   this count per ``tool_name``.
@@ -145,27 +158,29 @@ class RetrievalAudit:
 
     @property
     def duplicate_call_ids(self) -> set[str]:
-        """Call IDs answered by more than one accepted tool message.
+        """Call IDs that got more than one result for the same call.
 
-        The strict rule allows this (each one descends from the issuing call), but a
-        real harness sends one result per call, so it is worth watching for.
+        Only the first result counts; the rest are rejected as ``duplicate_result``.
+        A real harness sends one result per call, so a non-empty set is a tampering
+        signal worth reporting.
         """
-        counts = Counter(a.tool_call_id for a in self.accepted)
-        return {cid for cid, n in counts.items() if n > 1}
+        return {r.tool_call_id for r in self.rejected if r.reason == "duplicate_result"}
 
 
-def _ancestors(trace: vf.Trace, node: int) -> set[int]:
-    """Indices of every node above ``node`` on its ``parent`` chain.
+def _ancestors(trace: vf.Trace, node: int) -> list[int]:
+    """Indices of the nodes above ``node`` on its ``parent`` chain, nearest first.
 
     Guards against cycles and out-of-range parents, which a hand-built or tampered
     trace could contain: the walk stops rather than looping or crashing.
     """
+    chain: list[int] = []
     seen: set[int] = set()
     current = trace.nodes[node].parent
     while current is not None and current not in seen and 0 <= current < len(trace.nodes):
+        chain.append(current)
         seen.add(current)
         current = trace.nodes[current].parent
-    return seen
+    return chain
 
 
 def audit_retrieval(trace: vf.Trace) -> RetrievalAudit:
@@ -196,6 +211,7 @@ def audit_retrieval(trace: vf.Trace) -> RetrievalAudit:
                 unsampled_ids.add(call.id)
 
     audit = RetrievalAudit()
+    answered: set[tuple[int, str]] = set()  # (issuer node, call ID) already answered
     for i, node in enumerate(trace.nodes):
         msg = node.message
         if not isinstance(msg, vf.ToolMessage):
@@ -210,13 +226,16 @@ def audit_retrieval(trace: vf.Trace) -> RetrievalAudit:
             reason = "call_not_sampled" if cid in unsampled_ids else "no_matching_call"
             reject(reason, msg.name)
             continue
-        above = _ancestors(trace, i)
-        # Nearest issuer first, in case one ID was issued twice on the same path.
-        issuer = next((n for n in sorted(issuers, reverse=True) if n in above), None)
+        # Nearest issuing ancestor, in case one ID was issued twice on the same path.
+        issuer = next((n for n in _ancestors(trace, i) if n in issuers), None)
         if issuer is None:
             reject("not_descendant", msg.name, f"issued at node(s) {issuers}")
             continue
         name = call_names[(issuer, cid)]
+        if (issuer, cid) in answered:
+            reject("duplicate_result", name, f"call already answered (issuer {issuer})")
+            continue
+        answered.add((issuer, cid))
         try:
             payload = ToolResultPayload.loads(content_text(msg.content))
         except ValidationError as e:
