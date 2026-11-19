@@ -7,7 +7,7 @@ import verifiers.v1 as vf
 from pydantic import ValidationError
 
 from contracts.builders import FIXTURES, TraceBuilder
-from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, QuestionItem
+from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, QuestionItem, UnsupportedPart
 
 
 def load_items() -> list[dict]:
@@ -337,3 +337,180 @@ def test_different_relations_may_have_different_flags():
     raw["gold_evidence"].append("E:000013")
     item = QuestionItem.model_validate(raw)
     assert [gp.directed for gp in item.gold_points] == [False, False, True]
+
+
+# --- the unsupported part of partial (and correctable) items ------------------------
+# The fixture partial item asks about GENE_A/GENE_B (answerable) and about a drug acting
+# on GENE_D (no edges). Its unsupported part has no triple: the drug is unknown.
+
+
+def absent_triple(subject_id="GENE_D", relation="associated_with", object_id="DIS_1",
+                  directed=False) -> dict:
+    return {"subject_id": subject_id, "relation": relation, "object_id": object_id,
+            "directed": directed}
+
+
+def partial_with(triple: dict | None, description: str = "the Gene Delta part") -> dict:
+    raw = by_qtype(load_items(), "partial")
+    raw["unsupported_part"] = {"description": description, "triple": triple}
+    return raw
+
+
+def partial_with_directed_gold(triple: dict | None) -> dict:
+    """The fixture partial item plus a directed gold point, DIS_3 subtype_of DIS_G
+    (the fixture store's directed edge E:000013)."""
+    raw = partial_with(triple)
+    raw["gold_points"].append(
+        {"id": "gp3", "subject_id": "DIS_3", "relation": "subtype_of",
+         "object_id": "DIS_G", "evidence": ["E:000013"], "directed": True}
+    )
+    raw["gold_evidence"].append("E:000013")
+    return raw
+
+
+def test_fixture_partial_item_names_its_unsupported_part(raw_items):
+    item = QuestionItem.model_validate(by_qtype(raw_items, "partial"))
+    assert isinstance(item.unsupported_part, UnsupportedPart)
+    assert "Gene Delta" in item.unsupported_part.description
+    assert item.unsupported_part.triple is None
+
+
+def test_partial_item_requires_unsupported_part(raw_items):
+    bad = by_qtype(raw_items, "partial")
+    del bad["unsupported_part"]
+    with pytest.raises(ValidationError, match="need an unsupported_part"):
+        QuestionItem.model_validate(bad)
+    bad["unsupported_part"] = None
+    with pytest.raises(ValidationError, match="need an unsupported_part"):
+        QuestionItem.model_validate(bad)
+
+
+def test_partial_item_with_a_triple_validates():
+    item = QuestionItem.model_validate(partial_with(absent_triple()))
+    t = item.unsupported_part.triple
+    assert (t.subject_id, t.relation, t.object_id, t.directed) == (
+        "GENE_D", "associated_with", "DIS_1", False
+    )
+
+
+def test_triple_defaults_to_none():
+    raw = partial_with(None)
+    del raw["unsupported_part"]["triple"]
+    assert QuestionItem.model_validate(raw).unsupported_part.triple is None
+
+
+@pytest.mark.parametrize("triple", [None, absent_triple("DRUG_Y", "indicated_for", "DIS_2")])
+def test_unsupported_part_allowed_on_correctable_items(raw_items, triple):
+    raw = by_qtype(raw_items, "false_premise", "correctable")
+    raw["unsupported_part"] = {"description": "why Drug Y is indicated", "triple": triple}
+    item = QuestionItem.model_validate(raw)
+    assert item.unsupported_part.description == "why Drug Y is indicated"
+    assert item.premise is not None
+
+
+def test_correctable_items_do_not_require_unsupported_part(raw_items):
+    item = QuestionItem.model_validate(by_qtype(raw_items, "false_premise", "correctable"))
+    assert item.unsupported_part is None
+
+
+@pytest.mark.parametrize(
+    "qtype, answerable",
+    [
+        ("single_hop", "yes"),
+        ("multi_hop", "yes"),
+        ("unanswerable", "no"),
+        ("false_premise", "no"),
+    ],
+)
+def test_unsupported_part_rejected_on_yes_and_no_items(raw_items, qtype, answerable):
+    bad = by_qtype(raw_items, qtype, answerable)
+    bad["unsupported_part"] = {"description": "something", "triple": None}
+    with pytest.raises(ValidationError, match="allowed only on partial and correctable"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("description", ["", "   ", "\n\t"])
+def test_blank_description_rejected(description):
+    with pytest.raises(ValidationError, match="description"):
+        QuestionItem.model_validate(partial_with(None, description=description))
+
+
+def test_missing_description_rejected():
+    raw = partial_with(None)
+    del raw["unsupported_part"]["description"]
+    with pytest.raises(ValidationError, match="description"):
+        QuestionItem.model_validate(raw)
+
+
+def test_unsupported_part_rejects_extra_fields():
+    raw = partial_with(None)
+    raw["unsupported_part"]["triples"] = []
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(raw)
+
+
+def test_unsupported_part_is_frozen():
+    item = QuestionItem.model_validate(partial_with(None))
+    with pytest.raises(ValidationError):
+        item.unsupported_part.description = "changed"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_triple_equal_to_an_undirected_gold_point_is_rejected(reverse):
+    # gp1 is GENE_A associated_with DIS_1, unflagged: either order is the same fact.
+    s, o = ("DIS_1", "GENE_A") if reverse else ("GENE_A", "DIS_1")
+    with pytest.raises(ValidationError, match="same fact as gold point 'gp1'"):
+        QuestionItem.model_validate(partial_with(absent_triple(s, "associated_with", o)))
+
+
+def test_triple_equal_to_a_directed_gold_point_is_rejected():
+    triple = absent_triple("DIS_3", "subtype_of", "DIS_G", directed=True)
+    with pytest.raises(ValidationError, match="same fact as gold point 'gp3'"):
+        QuestionItem.model_validate(partial_with_directed_gold(triple))
+
+
+def test_triple_reversing_a_directed_gold_point_is_valid():
+    # The reverse of a directed fact is a different fact, as for premises.
+    triple = absent_triple("DIS_G", "subtype_of", "DIS_3", directed=True)
+    item = QuestionItem.model_validate(partial_with_directed_gold(triple))
+    assert item.unsupported_part.triple.directed
+
+
+def test_triple_with_a_flag_differing_from_the_gold_points_is_rejected():
+    # The gold points on associated_with are unflagged; a directed triple on it isn't.
+    triple = absent_triple("GENE_D", "associated_with", "DIS_1", directed=True)
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'associated_with'"):
+        QuestionItem.model_validate(partial_with(triple))
+
+
+def test_unflagged_triple_on_a_directed_gold_relation_is_rejected():
+    triple = absent_triple("DIS_G", "subtype_of", "DIS_3", directed=False)
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'subtype_of'"):
+        QuestionItem.model_validate(partial_with_directed_gold(triple))
+
+
+def test_triple_with_a_flag_differing_from_the_premise_is_rejected(raw_items):
+    raw = by_qtype(raw_items, "false_premise", "correctable")  # unflagged indicated_for premise
+    raw["unsupported_part"] = {
+        "description": "something",
+        "triple": absent_triple("DRUG_Y", "indicated_for", "DIS_1", directed=True),
+    }
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'indicated_for'"):
+        QuestionItem.model_validate(raw)
+
+
+def test_triple_on_its_own_relation_may_be_directed():
+    triple = absent_triple("GENE_D", "subtype_of", "DIS_G", directed=True)
+    item = QuestionItem.model_validate(partial_with(triple))
+    assert item.unsupported_part.triple.directed
+    assert not any(gp.directed for gp in item.gold_points)
+
+
+@pytest.mark.parametrize("triple", [None, absent_triple(directed=False)])
+def test_unsupported_part_survives_trace_round_trip(triple):
+    item = QuestionItem.model_validate(partial_with(triple))
+    trace = TraceBuilder(item).build()
+    typed = vf.Trace[QuestionItem, vf.State, vf.AgentConfig]
+    reloaded = typed.model_validate_json(trace.to_json())
+    assert reloaded.task.data == item
+    assert reloaded.task.data.unsupported_part == item.unsupported_part
