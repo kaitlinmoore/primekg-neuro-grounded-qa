@@ -54,7 +54,7 @@ def test_b_id_only_in_reply_text_is_not_counted():
 
 
 def test_c_prompt_supplied_tool_exchange_is_not_counted():
-    # H-002 case D: a few-shot exchange in the prompt. trace.tool_messages includes
+    # A few-shot tool exchange supplied in the prompt. trace.tool_messages includes
     # it; strict retrieval must not.
     b = TraceBuilder()
     b.user("example question")
