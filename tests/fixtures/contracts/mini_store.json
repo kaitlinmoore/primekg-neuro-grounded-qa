@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic evidence store for contract tests. Every name, ID and relation label is invented; nothing comes from PrimeKG or any real graph. Edges reference entities by ID.",
+  "_comment": "Synthetic evidence store for contract tests. Every name, ID and relation label is invented; nothing comes from PrimeKG or any real graph. Edges reference entities by ID. E:000013 is the one directed edge: a same-type hierarchy fact, normalized so the subject is the child (narrower) and the object the parent (broader).",
   "build_id": "fixture-mini-store-v1",
   "entities": [
     {"id": "GENE_A", "name": "Gene Alpha", "type": "gene", "source": "SYNTH"},
@@ -8,6 +8,8 @@
     {"id": "GENE_D", "name": "Gene Delta", "type": "gene", "source": "SYNTH"},
     {"id": "DIS_1", "name": "Disease One", "type": "disease", "source": "SYNTH"},
     {"id": "DIS_2", "name": "Disease Two", "type": "disease", "source": "SYNTH"},
+    {"id": "DIS_3", "name": "Disease Three", "type": "disease", "source": "SYNTH"},
+    {"id": "DIS_G", "name": "Disease Group G", "type": "disease", "source": "SYNTH"},
     {"id": "DRUG_X", "name": "Drug X", "type": "drug", "source": "SYNTH"},
     {"id": "DRUG_Y", "name": "Drug Y", "type": "drug", "source": "SYNTH"},
     {"id": "PATH_P", "name": "Pathway P", "type": "pathway", "source": "SYNTH"},
@@ -25,6 +27,7 @@
     {"id": "E:000009", "subject": "GENE_C", "relation": "associated_with", "display_relation": "associated with", "object": "DIS_2"},
     {"id": "E:000010", "subject": "DIS_1", "relation": "has_phenotype", "display_relation": null, "object": "PHEN_Q"},
     {"id": "E:000011", "subject": "GENE_A", "relation": "interacts_with", "display_relation": "interacts with", "object": "GENE_C"},
-    {"id": "E:000012", "subject": "DIS_2", "relation": "has_phenotype", "display_relation": null, "object": "PHEN_Q"}
+    {"id": "E:000012", "subject": "DIS_2", "relation": "has_phenotype", "display_relation": null, "object": "PHEN_Q"},
+    {"id": "E:000013", "subject": "DIS_3", "relation": "subtype_of", "display_relation": "subtype of", "object": "DIS_G", "directed": true}
   ]
 }
