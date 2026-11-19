@@ -6,11 +6,13 @@ exactly one ``Taskset`` subclass in ``__all__``. If this test fails, no CLI can 
 the environment.
 """
 
+from pathlib import Path
+
 import verifiers.v1 as vf
 from verifiers.v1.utils.loaders import taskset_class
 
 import neuro_grounded_qa
-from neuro_grounded_qa.taskset import NeuroGroundedQATaskset
+from neuro_grounded_qa.taskset import NeuroGroundedQAConfig, NeuroGroundedQATaskset
 
 ENV_ID = "neuro-grounded-qa"
 
@@ -26,8 +28,9 @@ def test_package_exports_exactly_one_taskset():
     assert neuro_grounded_qa.__all__ == ["NeuroGroundedQATaskset"]
 
 
-def test_stub_loads_one_placeholder_task():
-    taskset = NeuroGroundedQATaskset(vf.TasksetConfig())
-    tasks = list(taskset)
-    assert len(tasks) == 1
-    assert tasks[0].data.id == "placeholder-0"
+def test_default_config_loads_tasks(monkeypatch):
+    # With its defaults the taskset reads the synthetic fixture items, relative to
+    # the repo root (the working directory vf-validate and vf-run are run from).
+    monkeypatch.chdir(Path(__file__).resolve().parent.parent)
+    taskset = NeuroGroundedQATaskset(NeuroGroundedQAConfig())
+    assert len(list(taskset)) > 0
