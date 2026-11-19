@@ -2369,3 +2369,339 @@ Findings:
 | OptimusKG | `MFN-MFN/IS_A` | 0 of 0 | 0 of 0 | 0 of 0 | 0 of 0 | 0 |
 | OptimusKG | `PHE-PHE/PARENT` | 136 of 136 | 1,038 of 1,038 | 913 of 913 | 0 of 0 | 0 |
 | OptimusKG | `PWY-PWY/PARENT` | 0 of 0 | 0 of 0 | 0 of 0 | 0 of 0 | 0 |
+
+## Evidence store
+
+Built on 2026-11-19 by `python -m neuro_grounded_qa.data.build` (builder version
+1.0.0) from PrimeKG v2.1 (`kg.csv` and `kg_grouped_diseases.csv`, SHA-256 checked
+against the download manifest). Settled inputs: PrimeKG, the broader
+neurodegeneration domain, subgraph definition (c) at the 95th degree percentile,
+and the seed below. The store holds no data in the repo; it is built into
+`$NGQ_DATA_DIR/store/primekg-neuro-c95/`.
+
+| | Value |
+|---|---|
+| `build_id` | `primekg-2.1-1dff1ca094ce` |
+| Nodes | 11,789 |
+| Edges | 45,521 (1,494 directed) |
+| Single-hop facts (edges with a seed at one end) | 2,236 |
+| Degree cap for (c) p95 | 206 distinct neighbours |
+| N1 / 1-hop nodes expanded | 993 / 657 |
+| Files | `edges.jsonl` 6.9 MB, `entities.jsonl` 1.1 MB, provenance 9.2 MB, `build.json` 13 KB |
+| Tool server load | 5.2–5.5 s, about 260 MB resident; `get_neighbors` about 4–5 ms per call |
+
+### Final seed
+
+28 PrimeKG nodes. The name rule's 22 (each main node plus its `disease_disease`
+neighbours whose name contains the main node's name, minus `38307`), plus six added
+on 2026-11-19 (logged as a seed-rule change). "Store ID" is the entity ID claims
+use; "Edges" counts store edges touching the node.
+
+| Group | PrimeKG index | Store ID | Name | Edges | Added |
+|---|---|---|---|---|---|
+| AD | `28780` | `MONDO_grouped:4975` | Alzheimer disease | 233 | |
+| AD | `83960` | `MONDO:11401` | Alzheimer disease without neurofibrillary tangles | 111 | |
+| AD | `32654` | `MONDO_grouped:100087` | familial Alzheimer disease | 15 | |
+| AD | `31527` | `MONDO:11513` | Alzheimer disease, familial early-onset, with coexisting amyloid and prion pathology | 6 | |
+| AD | `94982` | `MONDO:10783` | Alzheimer disease, susceptibility to, mitochondrial | 3 | |
+| PD | `28547` | `MONDO_grouped:5180` | Parkinson disease | 305 | |
+| PD | `33241` | `MONDO:18466` | hereditary late onset Parkinson disease | 145 | |
+| PD | `28801` | `MONDO:14231` | juvenile onset Parkinson disease 19A | 127 | |
+| PD | `27576` | `MONDO_grouped:10820` | autosomal recessive Parkinson disease | 84 | |
+| PD | `32468` | `MONDO:1945` | postencephalitic Parkinson disease | 51 | |
+| PD | `28182` | `MONDO_grouped:11896` | Parkinson disease, autosomal dominant, susceptibility to | 17 | |
+| PD | `32001` | `MONDO_grouped:11220` | parkinson disease, autosomal dominant | 7 | |
+| PD | `30093` | `MONDO:9830` | parkinsonian-pyramidal syndrome | 141 | yes |
+| PD | `29670` | `MONDO:11706` | Kufor-Rakeb syndrome | 73 | yes |
+| FTD | `35691` | `MONDO:17276` | frontotemporal dementia | 15 | |
+| FTD | `28751` | `MONDO_grouped:507` | inclusion body myopathy with Paget disease of bone and frontotemporal dementia | 69 | |
+| FTD | `32688` | `MONDO:17160` | behavioral variant of frontotemporal dementia | 47 | |
+| FTD | `28473` | `MONDO:8243` | Pick disease | 155 | yes |
+| FTD | `28467` | `MONDO:11842` | Grn-related frontotemporal lobar degeneration with Tdp43 inclusions | 28 | yes |
+| FTD/ALS | `28708` | `MONDO_grouped:30923` | frontotemporal dementia and/or amyotrophic lateral sclerosis | 71 | yes |
+| FTD/ALS | `32696` | `MONDO:17161` | frontotemporal dementia with motor neuron disease | 47 | yes |
+| ALS | `27248` | `MONDO_grouped:4976` | amyotrophic lateral sclerosis | 292 | |
+| ALS | `31996` | `MONDO_grouped:17593` | juvenile amyotrophic lateral sclerosis | 53 | |
+| ALS | `38139` | `MONDO:5144` | familial amyotrophic lateral sclerosis | 7 | |
+| ALS | `29634` | `MONDO:8782` | amyotrophic lateral sclerosis with polyglucosan bodies | 6 | |
+| HD | `31245` | `MONDO:7739` | Huntington disease | 78 | |
+| HD | `33341` | `MONDO:16621` | juvenile Huntington disease | 41 | |
+| DLB | `29296` | `MONDO:7488` | Lewy body dementia | 36 | |
+
+- **Excluded:** `38307` "Huntington disease and related disorders" (a parent of
+  HD in MONDO and by file order).
+- **Combined FTD/ALS nodes:** `28708` and `32696` are the two PrimeKG disease nodes
+  that name both FTD and ALS/motor neuron disease. They form their own group here.
+  `31354` "amyotrophic lateral sclerosis-parkinsonism-dementia complex" (the Guam
+  complex) is not an FTD/ALS node and is not in the seed.
+- **Single-hop facts by group** (a fact on two groups' seeds counts in both): AD
+  364, PD 940, FTD 310, FTD/ALS 117, ALS 354, HD 118, DLB 36. 27 facts join two seed
+  nodes. By relation: `disease_protein` 917, `disease_phenotype_positive` 847,
+  `contraindication` 135, `indication` 129, `exposure_disease` 114,
+  `disease_disease` 84, `disease_phenotype_negative` 7, `off-label use` 3.
+
+### Counts against the expansion test
+
+The builder reproduces the measured (c) p95 subgraph exactly. Built with the name
+rule's 22 seeds (`--seed-set neuro-name-rule`), it gives the expansion test's
+numbers; the six added seeds bring the rest.
+
+| Seed | Nodes | Edges | Single-hop facts | `disease_disease` edges | `phenotype_phenotype` edges |
+|---|---|---|---|---|---|
+| Name rule, 22 nodes (expansion test, (c) p95) | 11,579 | 44,451 | 1,729 | 559 | 815 |
+| Final, 28 nodes (the store) | 11,789 | 45,521 | 2,236 | 582 | 912 |
+
+`scripts/data/check_store.py` also checks the store's (relation, node pair) set
+against the measurement code (`scripts/data/subgraph.py`) for the final seed: the
+same 45,521 edges and 11,789 nodes, none only in one, and the same degree cap.
+
+### ID and label scheme
+
+- **Entity IDs** are `<x_source>:<x_id>`, PrimeKG's own source and ID:
+  `NCBI:351`, `MONDO:7739`, `HPO:2354`, `DrugBank:DB00843`, `GO:98793`,
+  `UBERON:955`, `REACTOME:R-HSA-...`, `CTD:D007854`. Numbers are as PrimeKG writes
+  them, without the ontologies' zero padding (`MONDO:7739`, not `MONDO:0007739`).
+  Computed over the whole graph, so a node's ID doesn't depend on the seed.
+- **Collisions.** 63 `<x_source>:<x_id>` values name two nodes each (61 NCBI, 2
+  UBERON), 126 nodes in all. They are mostly the same gene under an old and a new
+  symbol (`ND1` and `MT-ND1` share `NCBI:4535`) and two UBERON synonyms
+  (`multi-cellular organism` / `multicellular organism`). All 126 fall back to
+  `primekg:<x_index>`; 9 of them are in the store. No other node falls back.
+- **Grouped MONDO nodes** (PrimeKG merges similar diseases into one node; `x_id`
+  joins up to 30 MONDO numbers with `_`) get `MONDO_grouped:<member>`. The member is
+  the one whose own MONDO name equals the node's name (784 of 1,267 grouped nodes;
+  `Alzheimer disease` → `MONDO_grouped:4975`, MONDO's "Alzheimer disease"), else the
+  numerically smallest member. Every MONDO number belongs to at most one group and
+  none is also a plain MONDO node, so the ID is unique. 690 grouped nodes are in the
+  store. The full member list is in `entity_sources.jsonl`. This form is a proposal
+  (open question).
+- **Relation labels** are PrimeKG's `relation`, except `drug_protein`, which is
+  `drug_protein/<display_relation>` (`target`, `enzyme`, `transporter`, `carrier`).
+  The build fails unless each label has one `display_relation` and one pair of
+  endpoint types; it found 33 labels, all unambiguous. `display_relation` is kept
+  on every edge for display.
+- **Evidence IDs** are `E:` plus a zero-padded number (six digits here), assigned
+  in (relation, subject ID, object ID) order. The same raw files and config always
+  give the same IDs: two builds give byte-identical edge files.
+- **`build_id`** is `primekg-2.1-` plus the first 12 hex digits of a SHA-256 over
+  the raw files' SHA-256, the seed IDs, the subgraph definition, the builder version
+  and the normalization rules. It is in `build.json`, which
+  `tools.store.read_build_id` reads without touching the edges.
+
+### Direction
+
+- **Deduplication.** PrimeKG writes every fact twice (`x→y`, then later `y→x`).
+  The store keeps one edge per (label, unordered pair): 8,100,498 raw rows become
+  4,050,249 facts, and every pair has exactly two rows, each the other's reverse.
+- **Hierarchy relations** are stored subject = child (narrower), object = parent
+  (broader), with `directed` true, so claims match them in that order only. The
+  orientation comes from each pair's first row in file order: parent → child for
+  `disease_disease`, `phenotype_phenotype`, `bioprocess_bioprocess`,
+  `molfunc_molfunc`, `cellcomp_cellcomp` and `pathway_pathway`; child → parent for
+  `anatomy_anatomy` (see "Directed-relation inventory"). In this store only
+  `disease_disease` (582) and `phenotype_phenotype` (912) occur.
+  - Check against OptimusKG's `PARENT` edges (parent → child) between the same
+    terms, for edges whose two ends are plain MONDO or HPO terms:
+    `disease_disease` 366 such edges, 138 agree, 0 reversed, 228 with no OptimusKG
+    edge either way; `phenotype_phenotype` 912 such edges, 790 agree, 0 reversed,
+    122 with no OptimusKG edge.
+- **`exposure_exposure`** (643 edges, none single-hop) stays undirected: it holds
+  CTD stressor/marker links, not a hierarchy (open question).
+- **Every other edge** is undirected. Its subject is, for readability, the end
+  whose type the relation's name puts first (`drug_protein`: the drug;
+  `anatomy_protein_present`: the anatomy), or the smaller entity ID for
+  `protein_protein`, `drug_drug` and `exposure_exposure`. Claims may state these
+  in either order.
+
+### Files
+
+A store directory (layout in `neuro_grounded_qa.data.store_files`):
+`build.json` (build ID, config, raw hashes, counts, checks, file hashes, creation
+time); `entities.jsonl` and `edges.jsonl` (what the tools load); and
+`entity_sources.jsonl` and `edge_sources.jsonl` (provenance: PrimeKG node index and
+source ID; the two `kg.csv` row numbers of each edge). `load_store` checks the
+loaded files' SHA-256 against `build.json`, so a store can't serve edges under the
+wrong `build_id`. Loading is pure Python; duckdb is needed only to build (the
+package's optional `build` extra).
+
+To point a run at the store instead of the fixture, override the store path (the
+committed `configs/local.toml` stays on the fixtures):
+
+```bash
+scripts/run.sh -m <model> --client.base-url <url> --client.api-key-var <VAR> \
+  --env.taskset.tools.store_path "$NGQ_DATA_DIR/store/primekg-neuro-c95"
+```
+
+Real question items are needed too (`--env.taskset.items_path`); they don't exist
+yet.
+
+### Checks
+
+`scripts/data/check_store.py` (re-reads `kg.csv` with Python's `csv` module,
+independently of the builder's duckdb) passes on the store:
+
+- every one of the 45,521 edges is a raw fact in one direction, with the same
+  relation and display relation, and its two recorded row numbers hold that fact
+  and its reverse; no fact appears twice;
+- every one of the 11,789 entities matches its raw node's name, type and source,
+  follows the ID scheme, and is on an edge or is a seed; IDs are unique;
+- every hierarchy edge is directed with the file-order child as subject; no other
+  edge is directed;
+- the edge set equals the measurement code's.
+
+A copy with one hierarchy edge reversed and one row number shifted fails both
+checks. The 50-edge spot-check sample (`spot_check.md`, seed 20261119) is in the
+store directory, not the repo.
+
+### Reachability (for the pagination decision)
+
+Reported only. `scripts/data/store_report.py` calls the real `get_neighbors` body
+with the default tool config (20 results, 16,000-byte payload cap, no pagination)
+for every seed node and every partner of a single-hop fact, with and without a
+relation filter. A fact counts as reachable by a route if that one call returns it.
+Edges come back in evidence-ID order, which is relation order, so an unfiltered
+call from a seed returns the alphabetically first relations
+(`contraindication`, `disease_disease`, ...).
+
+- 2,072 calls; the largest payload was 8,501 bytes, and no page was cut by the
+  payload cap, so the 20-result cap is the only limit here.
+- Without pagination, 2,010 of 2,236 single-hop facts (90%) are reachable in one
+  call by some route, but only 462 (21%) from the seed with no filter, and 1,011
+  (45%) from the seed with a relation filter. The partner end with a filter reaches
+  1,862 (83%).
+- The 226 unreached facts are in (seed, relation) groups over 20 whose partner
+  also has more than 20 edges: `disease_phenotype_positive` 170 (a phenotype shared
+  by many diseases), `disease_protein` 41, `contraindication` 8,
+  `exposure_disease` 7.
+- All 66 (seed, relation) groups with fan-out ≤ 20 are fully reachable from the
+  seed with a filter. The largest groups are `disease_protein` on ALS (108),
+  Parkinson disease (104), and Alzheimer disease, Alzheimer disease without
+  neurofibrillary tangles and Pick disease (101 each), and
+  `disease_phenotype_positive` on ALS (106): 6 pages each at 20 per page.
+
+| Route | Facts reachable in one call | Share |
+|---|---|---|
+| seed end, no filter | 462 of 2,236 | 21% |
+| seed end, relation filter | 1,011 of 2,236 | 45% |
+| partner end, no filter | 1,429 of 2,236 | 64% |
+| partner end, relation filter | 1,862 of 2,236 | 83% |
+| any of the four | 2,010 of 2,236 | 90% |
+
+**By relation** (all seeds; a fact counts once)
+
+| Relation | Facts | Seed end | Seed end, filter | Partner end | Partner end, filter | Any |
+|---|---|---|---|---|---|---|
+| `disease_protein` | 917 | 5% | 31% | 62% | 94% | 96% |
+| `disease_phenotype_positive` | 847 | 33% | 47% | 66% | 66% | 80% |
+| `contraindication` | 135 | 50% | 50% | 93% | 93% | 94% |
+| `indication` | 129 | 0% | 90% | 5% | 100% | 100% |
+| `exposure_disease` | 114 | 0% | 42% | 85% | 90% | 94% |
+| `disease_disease` | 84 | 83% | 100% | 83% | 89% | 100% |
+| `disease_phenotype_negative` | 7 | 100% | 100% | 100% | 100% | 100% |
+| `off-label use` | 3 | 0% | 100% | 0% | 100% | 100% |
+
+**By seed node and relation** (fan-out = the seed's facts of that relation)
+
+| Group | Seed | Relation | Fan-out | Seed end | Seed end, filter | Partner end | Partner end, filter | Any |
+|---|---|---|---|---|---|---|---|---|
+| AD | `MONDO:10783` Alzheimer disease, susceptibility to, mitochondrial | `disease_disease` | 1 | 100% | 100% | 0% | 100% | 100% |
+| AD | `MONDO:10783` Alzheimer disease, susceptibility to, mitochondrial | `disease_protein` | 2 | 100% | 100% | 100% | 100% | 100% |
+| AD | `MONDO:11401` Alzheimer disease without neurofibrillary tangles | `contraindication` | 2 | 100% | 100% | 100% | 100% | 100% |
+| AD | `MONDO:11401` Alzheimer disease without neurofibrillary tangles | `disease_disease` | 1 | 100% | 100% | 0% | 100% | 100% |
+| AD | `MONDO:11401` Alzheimer disease without neurofibrillary tangles | `disease_protein` | 101 | 17% | 20% | 73% | 100% | 100% |
+| AD | `MONDO:11401` Alzheimer disease without neurofibrillary tangles | `indication` | 7 | 0% | 100% | 29% | 100% | 100% |
+| AD | `MONDO:11513` Alzheimer disease, familial early-onset, with coexisting amyloid and prion pathology | `disease_disease` | 1 | 100% | 100% | 0% | 100% | 100% |
+| AD | `MONDO:11513` Alzheimer disease, familial early-onset, with coexisting amyloid and prion pathology | `disease_phenotype_positive` | 5 | 100% | 100% | 100% | 100% | 100% |
+| AD | `MONDO_grouped:100087` familial Alzheimer disease | `disease_disease` | 2 | 100% | 100% | 50% | 100% | 100% |
+| AD | `MONDO_grouped:100087` familial Alzheimer disease | `disease_phenotype_positive` | 12 | 100% | 100% | 75% | 75% | 100% |
+| AD | `MONDO_grouped:100087` familial Alzheimer disease | `disease_protein` | 1 | 100% | 100% | 100% | 100% | 100% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `contraindication` | 56 | 36% | 36% | 96% | 96% | 96% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `disease_disease` | 10 | 0% | 100% | 60% | 70% | 100% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `disease_phenotype_positive` | 50 | 0% | 40% | 66% | 66% | 74% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `disease_protein` | 101 | 0% | 20% | 69% | 92% | 94% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `exposure_disease` | 8 | 0% | 100% | 75% | 75% | 100% |
+| AD | `MONDO_grouped:4975` Alzheimer disease | `indication` | 8 | 0% | 100% | 38% | 100% | 100% |
+| ALS | `MONDO:5144` familial amyotrophic lateral sclerosis | `disease_disease` | 7 | 100% | 100% | 100% | 100% | 100% |
+| ALS | `MONDO:8782` amyotrophic lateral sclerosis with polyglucosan bodies | `disease_disease` | 1 | 100% | 100% | 100% | 100% | 100% |
+| ALS | `MONDO:8782` amyotrophic lateral sclerosis with polyglucosan bodies | `disease_phenotype_positive` | 5 | 100% | 100% | 80% | 80% | 100% |
+| ALS | `MONDO_grouped:17593` juvenile amyotrophic lateral sclerosis | `disease_disease` | 2 | 100% | 100% | 100% | 100% | 100% |
+| ALS | `MONDO_grouped:17593` juvenile amyotrophic lateral sclerosis | `disease_phenotype_positive` | 43 | 42% | 47% | 60% | 60% | 81% |
+| ALS | `MONDO_grouped:17593` juvenile amyotrophic lateral sclerosis | `disease_protein` | 8 | 0% | 100% | 62% | 100% | 100% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `disease_disease` | 7 | 100% | 100% | 100% | 100% | 100% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `disease_phenotype_negative` | 5 | 100% | 100% | 100% | 100% | 100% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `disease_phenotype_positive` | 106 | 8% | 19% | 52% | 52% | 61% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `disease_protein` | 108 | 0% | 19% | 58% | 98% | 98% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `exposure_disease` | 64 | 0% | 31% | 86% | 92% | 94% |
+| ALS | `MONDO_grouped:4976` amyotrophic lateral sclerosis | `indication` | 2 | 0% | 100% | 0% | 100% | 100% |
+| DLB | `MONDO:7488` Lewy body dementia | `contraindication` | 2 | 100% | 100% | 100% | 100% | 100% |
+| DLB | `MONDO:7488` Lewy body dementia | `disease_disease` | 2 | 100% | 100% | 50% | 100% | 100% |
+| DLB | `MONDO:7488` Lewy body dementia | `disease_phenotype_positive` | 7 | 100% | 100% | 71% | 71% | 100% |
+| DLB | `MONDO:7488` Lewy body dementia | `disease_protein` | 22 | 41% | 91% | 64% | 86% | 95% |
+| DLB | `MONDO:7488` Lewy body dementia | `off-label use` | 3 | 0% | 100% | 0% | 100% | 100% |
+| FTD | `MONDO:11842` Grn-related frontotemporal lobar degeneration with Tdp43 inclusions | `disease_disease` | 3 | 100% | 100% | 100% | 100% | 100% |
+| FTD | `MONDO:11842` Grn-related frontotemporal lobar degeneration with Tdp43 inclusions | `disease_phenotype_positive` | 24 | 71% | 83% | 96% | 96% | 100% |
+| FTD | `MONDO:11842` Grn-related frontotemporal lobar degeneration with Tdp43 inclusions | `disease_protein` | 1 | 0% | 100% | 100% | 100% | 100% |
+| FTD | `MONDO:17160` behavioral variant of frontotemporal dementia | `disease_disease` | 5 | 100% | 100% | 100% | 100% | 100% |
+| FTD | `MONDO:17160` behavioral variant of frontotemporal dementia | `disease_phenotype_positive` | 33 | 45% | 61% | 82% | 85% | 94% |
+| FTD | `MONDO:17160` behavioral variant of frontotemporal dementia | `disease_protein` | 9 | 0% | 100% | 78% | 100% | 100% |
+| FTD | `MONDO:17276` frontotemporal dementia | `disease_disease` | 7 | 100% | 100% | 86% | 100% | 100% |
+| FTD | `MONDO:17276` frontotemporal dementia | `disease_protein` | 8 | 100% | 100% | 75% | 100% | 100% |
+| FTD | `MONDO:8243` Pick disease | `contraindication` | 27 | 74% | 74% | 93% | 93% | 93% |
+| FTD | `MONDO:8243` Pick disease | `disease_disease` | 3 | 0% | 100% | 100% | 100% | 100% |
+| FTD | `MONDO:8243` Pick disease | `disease_phenotype_positive` | 17 | 0% | 100% | 65% | 65% | 100% |
+| FTD | `MONDO:8243` Pick disease | `disease_protein` | 101 | 0% | 20% | 71% | 94% | 95% |
+| FTD | `MONDO:8243` Pick disease | `indication` | 7 | 0% | 100% | 29% | 100% | 100% |
+| FTD | `MONDO_grouped:507` inclusion body myopathy with Paget disease of bone and frontotemporal dementia | `disease_disease` | 6 | 100% | 100% | 83% | 83% | 100% |
+| FTD | `MONDO_grouped:507` inclusion body myopathy with Paget disease of bone and frontotemporal dementia | `disease_phenotype_positive` | 60 | 23% | 33% | 48% | 48% | 63% |
+| FTD | `MONDO_grouped:507` inclusion body myopathy with Paget disease of bone and frontotemporal dementia | `disease_protein` | 3 | 0% | 100% | 100% | 100% | 100% |
+| FTD/ALS | `MONDO:17161` frontotemporal dementia with motor neuron disease | `disease_disease` | 7 | 100% | 100% | 100% | 100% | 100% |
+| FTD/ALS | `MONDO:17161` frontotemporal dementia with motor neuron disease | `disease_phenotype_positive` | 32 | 41% | 62% | 75% | 75% | 91% |
+| FTD/ALS | `MONDO:17161` frontotemporal dementia with motor neuron disease | `disease_protein` | 8 | 0% | 100% | 75% | 100% | 100% |
+| FTD/ALS | `MONDO_grouped:30923` frontotemporal dementia and/or amyotrophic lateral sclerosis | `disease_disease` | 4 | 100% | 100% | 75% | 75% | 100% |
+| FTD/ALS | `MONDO_grouped:30923` frontotemporal dementia and/or amyotrophic lateral sclerosis | `disease_phenotype_positive` | 59 | 27% | 34% | 54% | 54% | 69% |
+| FTD/ALS | `MONDO_grouped:30923` frontotemporal dementia and/or amyotrophic lateral sclerosis | `disease_protein` | 8 | 0% | 100% | 75% | 100% | 100% |
+| HD | `MONDO:16621` juvenile Huntington disease | `disease_disease` | 1 | 100% | 100% | 100% | 100% | 100% |
+| HD | `MONDO:16621` juvenile Huntington disease | `disease_phenotype_positive` | 21 | 90% | 95% | 71% | 71% | 100% |
+| HD | `MONDO:16621` juvenile Huntington disease | `disease_protein` | 17 | 0% | 100% | 35% | 100% | 100% |
+| HD | `MONDO:16621` juvenile Huntington disease | `indication` | 2 | 0% | 100% | 0% | 100% | 100% |
+| HD | `MONDO:7739` Huntington disease | `disease_disease` | 4 | 100% | 100% | 75% | 75% | 100% |
+| HD | `MONDO:7739` Huntington disease | `disease_phenotype_positive` | 55 | 29% | 36% | 62% | 64% | 78% |
+| HD | `MONDO:7739` Huntington disease | `disease_protein` | 17 | 0% | 100% | 35% | 82% | 100% |
+| HD | `MONDO:7739` Huntington disease | `indication` | 2 | 0% | 100% | 0% | 100% | 100% |
+| PD | `MONDO:11706` Kufor-Rakeb syndrome | `disease_disease` | 4 | 100% | 100% | 75% | 100% | 100% |
+| PD | `MONDO:11706` Kufor-Rakeb syndrome | `disease_phenotype_positive` | 67 | 24% | 30% | 96% | 97% | 97% |
+| PD | `MONDO:11706` Kufor-Rakeb syndrome | `disease_protein` | 2 | 0% | 100% | 50% | 100% | 100% |
+| PD | `MONDO:14231` juvenile onset Parkinson disease 19A | `contraindication` | 1 | 100% | 100% | 100% | 100% | 100% |
+| PD | `MONDO:14231` juvenile onset Parkinson disease 19A | `disease_disease` | 2 | 100% | 100% | 50% | 100% | 100% |
+| PD | `MONDO:14231` juvenile onset Parkinson disease 19A | `disease_phenotype_positive` | 16 | 100% | 100% | 88% | 88% | 100% |
+| PD | `MONDO:14231` juvenile onset Parkinson disease 19A | `disease_protein` | 86 | 1% | 23% | 57% | 100% | 100% |
+| PD | `MONDO:14231` juvenile onset Parkinson disease 19A | `indication` | 22 | 0% | 91% | 0% | 100% | 100% |
+| PD | `MONDO:18466` hereditary late onset Parkinson disease | `contraindication` | 1 | 100% | 100% | 100% | 100% | 100% |
+| PD | `MONDO:18466` hereditary late onset Parkinson disease | `disease_disease` | 5 | 100% | 100% | 60% | 100% | 100% |
+| PD | `MONDO:18466` hereditary late onset Parkinson disease | `disease_phenotype_positive` | 32 | 44% | 62% | 69% | 69% | 91% |
+| PD | `MONDO:18466` hereditary late onset Parkinson disease | `disease_protein` | 85 | 0% | 24% | 58% | 98% | 98% |
+| PD | `MONDO:18466` hereditary late onset Parkinson disease | `indication` | 22 | 0% | 91% | 0% | 100% | 100% |
+| PD | `MONDO:1945` postencephalitic Parkinson disease | `disease_disease` | 2 | 100% | 100% | 50% | 100% | 100% |
+| PD | `MONDO:1945` postencephalitic Parkinson disease | `disease_phenotype_positive` | 41 | 44% | 49% | 73% | 73% | 83% |
+| PD | `MONDO:1945` postencephalitic Parkinson disease | `indication` | 8 | 0% | 100% | 0% | 100% | 100% |
+| PD | `MONDO:9830` parkinsonian-pyramidal syndrome | `contraindication` | 1 | 100% | 100% | 0% | 0% | 100% |
+| PD | `MONDO:9830` parkinsonian-pyramidal syndrome | `disease_disease` | 2 | 100% | 100% | 50% | 100% | 100% |
+| PD | `MONDO:9830` parkinsonian-pyramidal syndrome | `disease_phenotype_positive` | 30 | 57% | 67% | 60% | 60% | 90% |
+| PD | `MONDO:9830` parkinsonian-pyramidal syndrome | `disease_protein` | 86 | 0% | 23% | 56% | 86% | 90% |
+| PD | `MONDO:9830` parkinsonian-pyramidal syndrome | `indication` | 22 | 0% | 91% | 0% | 100% | 100% |
+| PD | `MONDO_grouped:10820` autosomal recessive Parkinson disease | `disease_disease` | 4 | 100% | 100% | 75% | 100% | 100% |
+| PD | `MONDO_grouped:10820` autosomal recessive Parkinson disease | `disease_phenotype_negative` | 2 | 100% | 100% | 100% | 100% | 100% |
+| PD | `MONDO_grouped:10820` autosomal recessive Parkinson disease | `disease_phenotype_positive` | 43 | 33% | 47% | 72% | 74% | 86% |
+| PD | `MONDO_grouped:10820` autosomal recessive Parkinson disease | `disease_protein` | 35 | 0% | 57% | 49% | 86% | 94% |
+| PD | `MONDO_grouped:11220` parkinson disease, autosomal dominant | `disease_disease` | 1 | 100% | 100% | 0% | 100% | 100% |
+| PD | `MONDO_grouped:11220` parkinson disease, autosomal dominant | `disease_phenotype_positive` | 5 | 100% | 100% | 80% | 80% | 100% |
+| PD | `MONDO_grouped:11220` parkinson disease, autosomal dominant | `disease_protein` | 1 | 100% | 100% | 0% | 100% | 100% |
+| PD | `MONDO_grouped:11896` Parkinson disease, autosomal dominant, susceptibility to | `disease_disease` | 3 | 100% | 100% | 33% | 67% | 100% |
+| PD | `MONDO_grouped:11896` Parkinson disease, autosomal dominant, susceptibility to | `disease_phenotype_positive` | 11 | 100% | 100% | 45% | 45% | 100% |
+| PD | `MONDO_grouped:11896` Parkinson disease, autosomal dominant, susceptibility to | `disease_protein` | 3 | 100% | 100% | 100% | 100% | 100% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `contraindication` | 45 | 44% | 44% | 89% | 89% | 91% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `disease_disease` | 14 | 0% | 100% | 71% | 86% | 100% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `disease_phenotype_positive` | 73 | 0% | 27% | 51% | 51% | 59% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `disease_protein` | 104 | 0% | 19% | 55% | 84% | 87% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `exposure_disease` | 42 | 0% | 48% | 86% | 90% | 93% |
+| PD | `MONDO_grouped:5180` Parkinson disease | `indication` | 27 | 0% | 74% | 0% | 100% | 100% |
