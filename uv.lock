@@ -1681,8 +1681,17 @@ dependencies = [
     { name = "verifiers" },
 ]
 
+[package.optional-dependencies]
+build = [
+    { name = "duckdb" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = "==0.4.1" }]
+requires-dist = [
+    { name = "duckdb", marker = "extra == 'build'", specifier = ">=1.1" },
+    { name = "verifiers", specifier = "==0.4.1" },
+]
+provides-extras = ["build"]
 
 [[package]]
 name = "numpy"
