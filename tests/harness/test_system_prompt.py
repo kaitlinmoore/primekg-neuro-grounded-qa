@@ -67,3 +67,11 @@ def test_prompt_states_the_configured_limits():
     prompt = render_system_prompt(KGToolsetConfig(max_calls=5, max_results=7))
     assert "at most 5 tool calls" in prompt
     assert "at most 7 items" in prompt
+
+
+def test_prompt_says_to_keep_the_order_of_directed_relations():
+    lines = [line for line in PROMPT.splitlines() if "directed" in line]
+    assert lines == [
+        "- Some relations are directed. For those, keep the subject and the object "
+        "in the order the tool result shows."
+    ]

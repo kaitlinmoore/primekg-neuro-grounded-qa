@@ -1,22 +1,30 @@
-"""The taskset wiring: items by split, the held-out guard, the toolset and state."""
+"""The taskset wiring: items by split, the held-out guard, the toolset and state, the
+reward, and run provenance in ``trace.info``."""
 
 from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
 
 import pytest
 import verifiers.v1 as vf
 from verifiers.v1.state import state_cls
 from verifiers.v1.utils.loaders import taskset_class
 
+from contracts.builders import TraceBuilder, call, edge_payload
 from harness.helpers import ITEMS_PATH, SPLITS_PATH, STORE_PATH
 from neuro_grounded_qa.contracts import QuestionItem
+from neuro_grounded_qa.reward import DEFAULT_PARAMS, GroundingRewardMixin, RewardParams
 from neuro_grounded_qa.taskset import (
     NeuroGroundedQAConfig,
     NeuroGroundedQATask,
     NeuroGroundedQATaskset,
+    file_sha256,
     load_items,
     render_system_prompt,
 )
-from neuro_grounded_qa.tools import KGState, KGToolset, KGToolsetConfig
+from neuro_grounded_qa.tools import KGState, KGToolset, KGToolsetConfig, read_build_id
 
 
 def _taskset(**config) -> NeuroGroundedQATaskset:
@@ -117,8 +125,105 @@ def test_task_and_toolset_share_the_state_type():
     assert "kg_calls" in KGState.model_fields
 
 
-def test_task_has_no_reward_yet():
-    # The reward adapter is wired in a later step; until then nothing scores.
+# --- Reward wiring --------------------------------------------------------------------
+
+
+def test_task_carries_the_grounding_reward():
     [task] = list(_taskset(items_path=ITEMS_PATH).take(1))
-    assert task.hooks("reward") == []
-    assert isinstance(task, vf.Task)
+    assert isinstance(task, vf.Task) and isinstance(task, GroundingRewardMixin)
+    assert [fn.__name__ for fn in task.hooks("reward")] == ["grounding_reward"]
+    assert [fn.__name__ for fn in task.hooks("metric")] == ["grounding_metrics"]
+    assert task.reward_params == DEFAULT_PARAMS
+
+
+def test_loaded_task_scores_a_trace():
+    """The wiring end to end, with no rollout: a hand-built honest episode on the
+    first fixture item scores 1.0 through ``Task.score``."""
+    [task] = list(_taskset(items_path=ITEMS_PATH).take(1))
+    b = TraceBuilder(data=task.data)
+    b.user(task.data.prompt_text)
+    for i, eid in enumerate(("E:000001", "E:000002")):
+        b.assistant(None, [call(f"c{i}", "kg_get_edge", edge_id=eid)])
+        b.tool(f"c{i}", edge_payload(eid), name="kg_get_edge")
+    claims = [
+        {"subject_id": gp.subject_id, "relation": gp.relation, "object_id": gp.object_id,
+         "cites": list(gp.evidence)}
+        for gp in task.data.gold_points
+    ]
+    b.assistant(json.dumps({"claims": claims, "answer_text": "both"}))
+    trace = b.build()
+    asyncio.run(task.score(trace))
+    assert trace.reward == 1.0
+    assert trace.metrics["coverage"] == 1.0
+    assert trace.metrics["root_reply_present"] == 0.0
+
+
+# --- Provenance ---------------------------------------------------------------------
+
+
+def test_read_build_id_reads_the_store_file():
+    assert read_build_id(STORE_PATH) == "fixture-mini-store-v1"
+
+
+def test_read_build_id_defaults_like_the_in_memory_store(tmp_path):
+    store = tmp_path / "store.json"
+    store.write_text(json.dumps({"entities": [], "edges": []}))
+    assert read_build_id(store) == "fixture"
+
+
+def test_read_build_id_errors(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        read_build_id(tmp_path / "missing.json")
+    (tmp_path / "store.duckdb").write_bytes(b"")
+    with pytest.raises(ValueError, match="unknown evidence store format"):
+        read_build_id(tmp_path / "store.duckdb")
+
+
+def test_file_sha256_matches_hashlib():
+    assert file_sha256(ITEMS_PATH) == hashlib.sha256(ITEMS_PATH.read_bytes()).hexdigest()
+
+
+def test_tasks_carry_run_provenance():
+    tasks = list(_taskset(items_path=ITEMS_PATH, tools=KGToolsetConfig(store_path=STORE_PATH)))
+    expected = {
+        "store_build_id": "fixture-mini-store-v1",
+        "items_sha256": hashlib.sha256(ITEMS_PATH.read_bytes()).hexdigest(),
+    }
+    assert all(t.provenance == expected for t in tasks)
+
+
+def test_setup_writes_provenance_into_trace_info():
+    [task] = list(
+        _taskset(items_path=ITEMS_PATH, tools=KGToolsetConfig(store_path=STORE_PATH)).take(1)
+    )
+    trace = TraceBuilder(data=task.data).build()
+    trace.info["other"] = "kept"
+    asyncio.run(task.setup(trace, runtime=None))
+    assert trace.info == {
+        "other": "kept",
+        "store_build_id": "fixture-mini-store-v1",
+        "items_sha256": hashlib.sha256(ITEMS_PATH.read_bytes()).hexdigest(),
+        "reward_params": {
+            "lam": 0.5,
+            "partial_flag_credit": 0.2,
+            "correctable_abstain_credit": 0.7,
+            "flag_only_counts": True,
+        },
+    }
+    # trace.info is serialized with the trace (traces.jsonl).
+    assert json.loads(trace.model_dump_json())["info"]["store_build_id"] == "fixture-mini-store-v1"
+
+
+def test_reward_params_override_reaches_trace_info():
+    class StrictTask(NeuroGroundedQATask):
+        reward_params = RewardParams(lam=1.0)
+
+    [task] = list(_taskset(items_path=ITEMS_PATH).take(1))
+    strict = StrictTask(task.data, provenance=task.provenance)
+    assert strict.provenance_info()["reward_params"]["lam"] == 1.0
+
+
+def test_task_built_without_a_taskset_records_only_reward_params():
+    [task] = list(_taskset(items_path=ITEMS_PATH).take(1))
+    bare = NeuroGroundedQATask(task.data)
+    assert set(bare.provenance_info()) == {"reward_params"}
