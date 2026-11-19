@@ -37,25 +37,31 @@ def always_abstain(params=RewardParams()) -> dict[str, float]:
 
 
 def test_always_abstain_per_item():
-    assert always_abstain() == {
+    assert always_abstain() == pytest.approx({
         "fx-single-001": 0.0,
         "fx-multi-001": 0.0,
         "fx-partial-001": 0.0,
         "fx-unans-001": 1.0,
         "fx-falsep-001": 1.0,
-        "fx-falsep-002": 1.0,
-    }
+        "fx-falsep-002": 0.7,
+    })
 
 
 def test_always_abstain_mean_over_fixture_items():
-    # One fixture item per type, with two false-premise items: 3 of 6 reward abstaining.
+    # One fixture item per type, with two false-premise items: (1 + 1 + 0.7) / 6.
     rewards = always_abstain()
-    assert sum(rewards.values()) / len(rewards) == pytest.approx(0.5)
+    assert sum(rewards.values()) / len(rewards) == pytest.approx(2.7 / 6)
 
 
 def test_always_abstain_over_target_mix():
+    """Reward v0: 0.20 + 0.05 + 0.05 × 0.7 = 0.285 (recorded in docs/reward_spec.md)."""
     assert sum(TARGET_MIX.values()) == pytest.approx(1.0)
     rewards = always_abstain()
+    assert sum(TARGET_MIX[i] * r for i, r in rewards.items()) == pytest.approx(0.285)
+
+
+def test_always_abstain_over_target_mix_with_equal_correctable_credit():
+    rewards = always_abstain(RewardParams(correctable_abstain_credit=1.0))
     assert sum(TARGET_MIX[i] * r for i, r in rewards.items()) == pytest.approx(0.30)
 
 
@@ -88,4 +94,4 @@ def test_honest_oracle_beats_always_abstain_over_target_mix():
     )
     abstaining = sum(TARGET_MIX[i] * r for i, r in always_abstain().items())
     assert honest == pytest.approx(1.0)
-    assert abstaining == pytest.approx(0.30)
+    assert abstaining == pytest.approx(0.285)

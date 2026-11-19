@@ -32,18 +32,29 @@ def test_answer_metrics_for_a_messy_answer():
     fabricated = claim("GENE_D", "associated_with", "DIS_1", "E:999999")
     text = answer(cite_everything, GP2, GP2, fabricated)
     m = metrics_for(SINGLE, text, ["E:000001", "E:000002", "E:000003", "E:000007"])
-    assert m["claims"] == 4.0
+    assert m["claims"] == 4.0  # as written
     assert m["citations_per_claim"] == pytest.approx((3 + 1 + 1 + 1) / 4)
-    assert m["supported_claims"] == 3.0
+    # Facts after deduplication: GENE_A, GENE_B (twice) and GENE_D.
+    assert m["supported_claims"] == 2.0
     assert m["unsupported_claims"] == 1.0
     assert m["duplicate_claims"] == 1.0
+    assert m["voided_claims"] == 0.0
     assert m["stripped_cites"] == 1.0
     assert m["nonsupporting_valid_cites"] == 2.0  # E:000002 and E:000003 on claim 1
     assert m["retrieved_uncited"] == 1.0  # E:000007
     assert m["citation_validity"] == pytest.approx(5 / 6)
-    assert m["claim_support"] == pytest.approx(3 / 4)
+    assert m["claim_support"] == pytest.approx(2 / 3)
     assert m["coverage"] == 1.0
-    assert m["unsupported_penalty"] == pytest.approx(0.5 / 4)
+    assert m["unsupported_penalty"] == pytest.approx(0.5 / 3)
+
+
+def test_voided_and_duplicate_claims_are_recorded():
+    voided = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:999999")
+    reversed_gp2 = claim("DIS_1", "associated_with", "GENE_B", "E:000002")
+    m = metrics_for(SINGLE, answer(voided, GP2, reversed_gp2), ["E:000001", "E:000002"])
+    assert m["voided_claims"] == 1.0
+    assert m["duplicate_claims"] == 1.0
+    assert m["supported_claims"] == 1.0 and m["unsupported_claims"] == 1.0
     assert m["format_ok"] == 1.0 and m["unparseable"] == 0.0
     assert "premise_asserted" not in m
 
