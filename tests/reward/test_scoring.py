@@ -1,7 +1,9 @@
 """Tests for the pure scoring code: each component, and the aggregate per answerable.
 
-Default params throughout unless a test says otherwise: λ = 0.5, κ = 0.2, abstaining
-on a correctable item scores 1, flag-only answers count on partial items.
+Default params (reward v0) throughout unless a test says otherwise: λ = 0.5, κ = 0.2,
+abstaining on a correctable item scores 0.7, flag-only answers count on partial items.
+Strict citations (one bad cite voids a claim) and fact deduplication (claims stating
+the same fact count once in S or U) always apply.
 
 Fixture items (``tests/fixtures/contracts/items.jsonl``):
 
@@ -23,7 +25,13 @@ import pytest
 import neuro_grounded_qa.reward.scoring as scoring
 from contracts.builders import FIXTURES
 from neuro_grounded_qa.contracts import ParseFailure, parse_output, triple
-from neuro_grounded_qa.reward import RewardParams, clip, score, unsupported_penalty
+from neuro_grounded_qa.reward import (
+    DEFAULT_PARAMS,
+    RewardParams,
+    clip,
+    score,
+    unsupported_penalty,
+)
 
 from .helpers import ITEMS, abstain, answer, claim, evidence
 
@@ -98,14 +106,66 @@ def test_cite_to_unretrieved_id_is_stripped_and_claim_unsupported():
     assert b.reward == pytest.approx(0.5 - 0.5 * 1 / 2)
 
 
-def test_stripping_is_per_cite_not_per_claim():
+# --- Strict citations ---------------------------------------------------------------
+
+
+def test_reward_v0_defaults():
+    assert DEFAULT_PARAMS == RewardParams(
+        lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True
+    )
+
+
+def test_one_bad_cite_voids_the_claim():
+    """A claim citing one retrieved, stating edge and one fabricated ID is unsupported:
+    the valid cite is kept for the record, but the claim doesn't count."""
     c = claim("GENE_A", "associated_with", "DIS_1", "E:999999", "E:000001")
     b = run(SINGLE, answer(c), retrieved=evidence("E:000001"))
     (check,) = b.claims
     assert check.valid_cites == ("E:000001",)
     assert check.stripped_cites == ("E:999999",)
-    assert check.supported_by == "E:000001"
+    assert check.supported_by is None and not check.supported
+    assert check.voided
     assert b.citation_validity == 0.5
+    assert b.coverage == 0.0
+    assert b.n_unsupported == 1
+    assert b.reward == 0.0
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "E:000003",  # a real ID that wasn't retrieved
+        "E:999999",  # fabricated
+        "GENE_A",  # malformed
+        "",  # empty string
+    ],
+)
+def test_any_bad_cite_voids_an_otherwise_supported_claim(bad):
+    good = claim("GENE_A", "associated_with", "DIS_1", "E:000001", bad)
+    b = run(SINGLE, answer(good, GP2), retrieved=evidence("E:000001", "E:000002"))
+    assert not b.claims[0].supported and b.claims[0].voided
+    assert b.claims[1].supported
+    assert b.covered_gold == ("gp2",)
+    assert b.reward == pytest.approx(0.5 - 0.5 * 1 / 2)
+
+
+def test_retrieved_but_nonstating_extra_cite_does_not_void():
+    c = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:000002")
+    b = run(SINGLE, answer(c), retrieved=evidence("E:000001", "E:000002"))
+    assert b.claims[0].supported and not b.claims[0].voided
+
+
+def test_bad_cite_that_was_never_retrieved_voids_the_claim():
+    c = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:000002")
+    b = run(SINGLE, answer(c), retrieved=evidence("E:000001"))
+    assert b.claims[0].stripped_cites == ("E:000002",)
+    assert b.claims[0].voided and b.reward == 0.0
+
+
+def test_claim_with_no_stating_cite_is_unsupported_but_not_voided():
+    c = claim("GENE_A", "associated_with", "DIS_1", "E:999999")
+    b = run(SINGLE, answer(c))
+    assert not b.claims[0].supported and not b.claims[0].voided
 
 
 @pytest.mark.parametrize("bad", ["GENE_A", "E:1", "P:000001", "", "e:000001", " E:000001"])
@@ -122,6 +182,12 @@ def test_duplicate_cites_in_one_claim_are_counted_once():
     b = run(SINGLE, answer(c))
     assert b.claims[0].valid_cites == ("E:000001",)
     assert b.claims[0].stripped_cites == ("E:404404",)
+    assert b.claims[0].voided  # E:404404 was never retrieved
+
+
+def test_repeated_valid_cite_does_not_void():
+    c = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:000001")
+    assert run(SINGLE, answer(c)).claims[0].supported
 
 
 def test_nothing_retrieved_means_every_cite_is_stripped():
@@ -221,6 +287,89 @@ def test_repeating_a_gold_claim_covers_it_once():
     assert b.reward == 0.5
 
 
+# --- Duplicate facts ----------------------------------------------------------------
+
+
+def test_duplicate_facts_count_once():
+    fake = claim("GENE_D", "associated_with", "DIS_1", "E:999999")
+    b = run(SINGLE, answer(GP1, GP1, GP1, fake))
+    assert b.n_claims == 4 and b.n_facts == 2 and b.n_duplicates == 2
+    assert (b.n_supported, b.n_unsupported) == (1, 1)
+    # Without deduplication the penalty would be λ·1/4; with it, λ·1/2.
+    assert b.penalty == pytest.approx(0.5 * 1 / 2)
+    assert b.reward == pytest.approx(0.5 - 0.25)
+
+
+def test_reversed_duplicate_counts_once():
+    reversed_gp1 = claim("DIS_1", "associated_with", "GENE_A", "E:000001")
+    b = run(SINGLE, answer(GP1, reversed_gp1, GP2))
+    assert b.n_facts == 2 and b.n_duplicates == 1
+    assert b.n_supported == 2 and b.reward == 1.0
+
+
+def test_duplicate_unsupported_guesses_count_once():
+    fakes = [claim("GENE_D", "associated_with", "DIS_1", f"E:9{i:05d}") for i in range(4)]
+    reversed_fake = claim("DIS_1", "associated_with", "GENE_D", "E:988888")
+    b = run(SINGLE, answer(GP1, GP2, *fakes, reversed_fake))
+    assert b.n_facts == 3 and b.n_duplicates == 4
+    assert b.n_unsupported == 1
+    assert b.penalty == pytest.approx(0.5 * 1 / 3)
+
+
+def test_duplicate_with_one_supported_copy_counts_as_supported():
+    voided_copy = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:999999")
+    uncited_copy = claim("DIS_1", "associated_with", "GENE_A", "E:000002")  # wrong edge
+    for copies in ([voided_copy, GP1], [GP1, uncited_copy], [voided_copy, uncited_copy, GP1]):
+        b = run(SINGLE, answer(*copies, GP2))
+        assert b.n_facts == 2, copies
+        assert b.n_supported == 2 and b.n_unsupported == 0
+        assert b.penalty == 0.0
+        assert b.reward == 1.0
+
+
+def test_duplicate_with_no_supported_copy_is_one_unsupported_fact():
+    voided_copy = claim("GENE_A", "associated_with", "DIS_1", "E:000001", "E:999999")
+    uncited_copy = claim("DIS_1", "associated_with", "GENE_A", "E:000002")
+    b = run(SINGLE, answer(voided_copy, uncited_copy, GP2))
+    assert b.n_facts == 2 and (b.n_supported, b.n_unsupported) == (1, 1)
+    assert b.covered_gold == ("gp2",)
+    assert b.reward == pytest.approx(0.5 - 0.5 * 1 / 2)
+
+
+def test_reversed_directed_claim_is_not_a_duplicate():
+    """E:000013 is the fixture's one directed edge (DIS_3 subtype_of DIS_G). Its
+    reversal is a different, false fact: it must stay its own unsupported fact, not
+    hide in the correct claim's group."""
+    right = claim("DIS_3", "subtype_of", "DIS_G", "E:000013")
+    reversed_ = claim("DIS_G", "subtype_of", "DIS_3", "E:000013")
+    b = run(SINGLE, answer(GP1, GP2, right, reversed_), retrieved=evidence("E:000001", "E:000002", "E:000013"))
+    assert b.n_facts == 4 and b.n_duplicates == 0
+    assert b.claims[2].supported and not b.claims[3].supported
+    assert (b.n_supported, b.n_unsupported) == (3, 1)
+    assert b.penalty == pytest.approx(0.5 * 1 / 4)
+
+
+def test_directed_claim_repeated_in_order_is_a_duplicate():
+    right = claim("DIS_3", "subtype_of", "DIS_G", "E:000013")
+    b = run(SINGLE, answer(GP1, GP2, right, right), retrieved=evidence("E:000001", "E:000002", "E:000013"))
+    assert b.n_facts == 3 and b.n_duplicates == 1
+
+
+def test_directed_relations_come_from_retrieved_edges_and_the_item():
+    assert scoring.directed_relations(SINGLE, evidence("E:000001", "E:000013")) == {"subtype_of"}
+    assert scoring.directed_relations(SINGLE, evidence("E:000001")) == frozenset()
+    item = SINGLE.model_copy(
+        update={"gold_points": [SINGLE.gold_points[0].model_copy(update={"directed": True})]}
+    )
+    assert scoring.directed_relations(item, {}) == {"associated_with"}
+
+
+def test_same_entities_different_relation_are_different_facts():
+    other = claim("GENE_A", "member_of", "DIS_1", "E:000001")  # wrong relation
+    b = run(SINGLE, answer(GP1, other))
+    assert b.n_facts == 2 and b.n_duplicates == 0
+
+
 def test_unsupported_claim_matching_a_gold_point_does_not_cover_it():
     uncited_guess = claim("GENE_B", "associated_with", "DIS_1", "E:000001")  # wrong edge
     b = run(SINGLE, answer(GP1, uncited_guess))
@@ -247,7 +396,8 @@ def test_penalty_formula():
 def test_penalty_scales_with_unsupported_claims():
     rewards = []
     for n_bad in range(5):
-        fakes = [claim("GENE_D", "associated_with", "DIS_1", f"E:9{i:05d}") for i in range(n_bad)]
+        # Distinct facts: identical guesses would be deduplicated into one.
+        fakes = [claim(f"GENE_Z{i}", "associated_with", "DIS_1", f"E:9{i:05d}") for i in range(n_bad)]
         b = run(SINGLE, answer(GP1, GP2, *fakes))
         assert b.n_unsupported == n_bad
         assert b.penalty == pytest.approx(0.5 * n_bad / (2 + n_bad))
@@ -374,8 +524,15 @@ def test_no_restating_the_premise_scores_zero_and_is_recorded():
 
 def test_correctable_abstaining_earns_credit():
     b = run(FALSEP_FIX, abstain("the premise is false"))
-    assert b.reward == 1.0 and b.abstention_correct
+    assert b.reward == pytest.approx(0.7) and b.abstention_correct
     assert b.premise_asserted is False
+
+
+def test_correctable_correction_beats_abstaining():
+    correct = run(FALSEP_FIX, answer(CORRECTION)).reward
+    abstained = run(FALSEP_FIX, abstain()).reward
+    assert correct == 1.0 and abstained == pytest.approx(0.7)
+    assert correct > abstained
 
 
 def test_correctable_cited_correction_earns_credit():

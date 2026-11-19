@@ -14,7 +14,7 @@ from neuro_grounded_qa.tools.kg import (
     KGToolset,
     KGToolsetConfig,
 )
-from neuro_grounded_qa.tools.store import load_store
+from neuro_grounded_qa.tools.store import load_store, read_build_id
 
 __all__ = [
     "DEFAULT_STORE_PATH",
@@ -23,4 +23,5 @@ __all__ = [
     "KGToolset",
     "KGToolsetConfig",
     "load_store",
+    "read_build_id",
 ]

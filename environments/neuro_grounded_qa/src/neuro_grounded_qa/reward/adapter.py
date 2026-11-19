@@ -3,15 +3,16 @@
 ``evaluate(trace, item)`` reads the three scoring inputs off a trace through the
 contracts and calls ``scoring.score``:
 
-- the final answer: ``trace.last_reply``, parsed with ``contracts.parse_output``
-  (see ``docs/reward_spec.md``, "Final-answer source", for why this field);
+- the final answer: the content of the last model-sampled assistant message, parsed
+  with ``contracts.parse_output``. ``trace.root_reply`` is ignored for scoring (see
+  ``docs/reward_spec.md``, "Final-answer source");
 - the retrieved evidence: ``contracts.retrieved_evidence(trace)``, the strict rule;
 - the item: the task's ``QuestionItem``.
 
 ``GroundingRewardMixin`` exposes that as one ``@vf.reward`` and one ``@vf.metric``
 method for a ``vf.Task`` subclass to inherit::
 
-    class GroundedQATask(GroundingRewardMixin, vf.Task[QuestionItem]):
+    class NeuroGroundedQATask(GroundingRewardMixin, vf.Task[QuestionItem, KGState]):
         ...
 
 Verifiers finds decorated methods by scanning the task class's MRO
@@ -24,7 +25,7 @@ this against ``Task.score``.
 format gate zeroes it, and the formula changes with ``answerable``), so the
 components are recorded as metrics and only the aggregate is a reward.
 
-Wiring this into ``taskset.py`` is a separate step.
+``taskset.NeuroGroundedQATask`` inherits the mixin; that is the wiring.
 """
 
 from __future__ import annotations
@@ -52,14 +53,36 @@ from neuro_grounded_qa.reward.scoring import (
 
 
 def final_reply(trace: vf.Trace) -> str:
-    """The model's final answer text: ``trace.last_reply``.
+    """The model's final answer text: the content of the last model-sampled assistant
+    message in node order, stripped. ``""`` if there is none, or if it has only tool
+    calls (the episode was cut off), which parses as ``ParseFailure("empty")``.
 
-    In Verifiers 0.4.1 that is ``trace.root_reply`` when the harness reports one
-    (ACP harnesses do, and it's the root agent's answer when subagents ran), and
-    otherwise the content of the last model-sampled assistant message in node order.
-    Both are stripped of surrounding whitespace.
+    This is *not* ``trace.last_reply``. In Verifiers 0.4.1 ``last_reply`` returns
+    ``trace.root_reply`` whenever the harness reports one, and ``root_reply`` is set
+    by the harness program rather than tied to a sampled node, so a tampering harness
+    could report an answer the model never produced. Reward v0 scores only what the
+    model sampled; ``root_reply_metrics`` records whether ``root_reply`` was present
+    and whether it differed.
+
+    ``assistant_messages`` keeps only ``sampled=True`` nodes, so a prompt-supplied or
+    injected assistant message is never the final answer.
     """
-    return trace.last_reply
+    messages = trace.assistant_messages
+    return (messages[-1].content or "").strip() if messages else ""
+
+
+def root_reply_metrics(trace: vf.Trace) -> dict[str, float]:
+    """Whether the harness reported a ``root_reply``, and whether it differs from the
+    scored final reply (both stripped). Recorded, never scored.
+
+    - ``root_reply_present``: 1 if ``trace.root_reply`` is set.
+    - ``root_reply_differs``: 1 if it is set and its stripped text isn't the scored
+      reply. A nonzero mean on a single-agent harness is a tampering signal.
+    """
+    root = trace.root_reply
+    present = root is not None
+    differs = present and root.strip() != final_reply(trace)
+    return {"root_reply_present": float(present), "root_reply_differs": float(differs)}
 
 
 def _item(task: vf.TaskData) -> QuestionItem:
@@ -95,10 +118,15 @@ def evaluate(
 def all_metrics(
     trace: vf.Trace, item: QuestionItem, params: RewardParams = DEFAULT_PARAMS
 ) -> dict[str, float]:
-    """Every recorded metric for one trace: answer metrics plus trace metrics."""
+    """Every recorded metric for one trace: answer metrics, trace metrics and the
+    ``root_reply`` check."""
     ev = evaluate(trace, item, params)
     audit: RetrievalAudit = audit_retrieval(trace)
-    return answer_metrics(ev.breakdown, set(ev.retrieved_ids)) | trace_metrics(trace, audit)
+    return (
+        answer_metrics(ev.breakdown, set(ev.retrieved_ids))
+        | trace_metrics(trace, audit)
+        | root_reply_metrics(trace)
+    )
 
 
 class GroundingRewardMixin:

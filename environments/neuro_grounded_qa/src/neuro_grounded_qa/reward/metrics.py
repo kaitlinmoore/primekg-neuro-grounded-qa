@@ -26,7 +26,6 @@ from neuro_grounded_qa.contracts import (
     ParseFailureReason,
     RejectionReason,
     RetrievalAudit,
-    same_fact,
 )
 from neuro_grounded_qa.reward.scoring import ScoreBreakdown
 
@@ -43,10 +42,16 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
     - The components: ``citation_validity``, ``claim_support``, ``coverage`` (when
       defined), ``unsupported_penalty``, ``abstention_correct``, ``flagged``,
       ``premise_asserted`` (false-premise items only).
-    - ``claims``: claims per answer (0 for an abstention or parse failure).
+    - ``claims``: claims per answer as written, duplicates included (0 for an
+      abstention or parse failure).
     - ``citations_per_claim``: mean distinct cites per claim (when there are claims).
-    - ``supported_claims``, ``unsupported_claims``, ``duplicate_claims`` (claims
-      stating the same fact as an earlier claim).
+    - ``supported_facts``, ``unsupported_facts``: |S| and |U|, counted in distinct
+      facts after deduplication.
+    - ``duplicate_claims``: claims removed by deduplication (claims stating the same
+      fact as an earlier claim; reversed restatements count unless the relation is
+      directed).
+    - ``voided_claims``: claims a valid cite states but a stripped cite made
+      unsupported (strict citations).
     - ``stripped_cites``: cites to IDs that weren't retrieved.
     - ``nonsupporting_valid_cites``: retrieved cites other than the one that
       supported the claim (the "cite everything" signal).
@@ -74,18 +79,14 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
         out["premise_asserted"] = float(b.premise_asserted)
 
     out["claims"] = float(b.n_claims)
-    out["supported_claims"] = float(b.n_supported)
-    out["unsupported_claims"] = float(b.n_unsupported)
+    out["supported_facts"] = float(b.n_supported)
+    out["unsupported_facts"] = float(b.n_unsupported)
     if b.n_claims:
         out["citations_per_claim"] = (
             sum(len(c.valid_cites) + len(c.stripped_cites) for c in b.claims) / b.n_claims
         )
-    out["duplicate_claims"] = float(
-        sum(
-            any(same_fact(c.claim, earlier.claim) for earlier in b.claims[:i])
-            for i, c in enumerate(b.claims)
-        )
-    )
+    out["duplicate_claims"] = float(b.n_duplicates)
+    out["voided_claims"] = float(b.n_voided)
     out["stripped_cites"] = float(sum(len(c.stripped_cites) for c in b.claims))
     out["nonsupporting_valid_cites"] = float(
         sum(len([v for v in c.valid_cites if v != c.supported_by]) for c in b.claims)

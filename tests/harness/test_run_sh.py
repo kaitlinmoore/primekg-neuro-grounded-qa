@@ -74,6 +74,7 @@ def test_passes_through_to_vf_run_dry_run(tmp_path, model_flag):
     assert resolved["client"]["base_url"] == "http://localhost:1"
     # configs/local.toml was applied
     assert resolved["env"]["agent"]["runtime"]["type"] == "subprocess"
+    assert resolved["env"]["agent"]["harness"]["id"] == "null"  # no shell for the model
     taskset = resolved["env"]["taskset"]
     assert taskset["id"] == "neuro-grounded-qa"
     assert taskset["split"] == "train"

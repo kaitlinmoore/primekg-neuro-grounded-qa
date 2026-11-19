@@ -2,7 +2,7 @@
 
 A [Verifiers](https://github.com/PrimeIntellect-ai/verifiers) environment for citation-grounded question answering over a neurodegeneration-focused subgraph of PrimeKG, with a reward-hacking audit of its grounding verifier.
 
-**Status: in progress.** The repository is being set up; there is no environment code and there are no results yet.
+**Status: in progress.** The environment code is under construction and runs end to end on synthetic fixtures; the question set isn't built yet, and there are no results.
 
 ## Question
 
@@ -27,7 +27,8 @@ On WSL with the checkout under `/mnt/c`, [direnv](https://direnv.net/) is option
 ## How to run
 
 ```bash
-# Tests
+# Tests (the end-to-end tests run scripts/run.sh against a scripted stub
+# endpoint, no model; skip them with -m "not integration")
 uv run pytest
 
 # Validate the environment's tasks locally (no model, no agent)
@@ -39,6 +40,8 @@ uv run vf-validate neuro-grounded-qa --runtime.type subprocess
 scripts/run.sh -n 1 \
   -m <model> --client.base-url <endpoint-url> --client.api-key-var <ENV_VAR_NAME>
 ```
+
+Runs use verifiers' `null` harness (set in `configs/local.toml`): the model gets only the knowledge-graph tools. The default `bash` harness would also give it a shell on the local machine, where it could read the question items, gold answers included.
 
 Add `--dry-run True` to the `scripts/run.sh` command to resolve and write the config without running anything. Other `vf-run` options pass through unchanged. Run outputs go to `outputs/` (gitignored).
 

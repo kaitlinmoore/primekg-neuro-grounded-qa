@@ -19,7 +19,7 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 - Git: small fixes (typos, wording, links, one-line config) go straight to main. Anything that changes behavior, an instrument, or a version goes on a branch with a pull request.
 - Commit with the repo's configured identity (GitHub no-reply address).
 - No AI attribution in commits or pull requests: no Co-Authored-By trailers, session links or "Generated with" footers. AI assistance is disclosed in the README instead.
-- Model runs go through `scripts/run.sh`, which refuses to start without `-m` and `--client.base-url` and runs `vf-run` with `configs/local.toml` (local subprocess runtime). Every run names its model and endpoint explicitly. Prime Inference, Prime sandboxes and `prime eval push` are used only deliberately. Run outputs stay in `outputs/` (gitignored).
+- Model runs go through `scripts/run.sh`, which refuses to start without `-m` and `--client.base-url` and runs `vf-run` with `configs/local.toml` (local subprocess runtime, `null` harness: the model sees only the KG tools, because the default `bash` harness gives it a local shell that can read gold). Every run names its model and endpoint explicitly. Prime Inference, Prime sandboxes and `prime eval push` are used only deliberately. Run outputs stay in `outputs/` (gitignored).
 
 ## Environment
 - WSL2 (Ubuntu), working on the Windows checkout through `/mnt/c/dev/GitHub/primekg-neuro-grounded-qa`. Reason: verifiers 0.4.1 doesn't import on native Windows (`fcntl`, `os.killpg`).

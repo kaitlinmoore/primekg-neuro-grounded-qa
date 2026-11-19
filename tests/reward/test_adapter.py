@@ -14,8 +14,10 @@ from neuro_grounded_qa.contracts import QuestionItem
 from neuro_grounded_qa.reward import (
     GroundingRewardMixin,
     RewardParams,
+    all_metrics,
     evaluate,
     final_reply,
+    root_reply_metrics,
 )
 
 from .helpers import ITEMS, abstain, answer, claim, episode
@@ -137,11 +139,35 @@ def test_final_reply_is_the_last_sampled_assistant_message():
     assert evaluate(trace, SINGLE).breakdown.outcome == "abstain"
 
 
-def test_final_reply_prefers_root_reply():
+def test_root_reply_is_ignored_for_scoring():
+    """The harness-reported root_reply isn't tied to a sampled node, so it is never
+    scored: the last sampled message (an abstention here) is."""
     trace = episode(SINGLE, abstain(), ["E:000001", "E:000002"])
     trace.root_reply = "  " + answer(GP1, GP2) + "\n"
-    assert final_reply(trace) == answer(GP1, GP2)
-    assert evaluate(trace, SINGLE).breakdown.reward == 1.0
+    assert trace.last_reply == answer(GP1, GP2)  # library behavior: root_reply wins
+    assert final_reply(trace) == abstain()
+    assert evaluate(trace, SINGLE).breakdown.reward == 0.0
+    m = all_metrics(trace, SINGLE)
+    assert m["root_reply_present"] == 1.0
+    assert m["root_reply_differs"] == 1.0
+
+
+def test_root_reply_metrics():
+    trace = episode(SINGLE, answer(GP1, GP2), ["E:000001", "E:000002"])
+    assert root_reply_metrics(trace) == {"root_reply_present": 0.0, "root_reply_differs": 0.0}
+    trace.root_reply = answer(GP1, GP2) + "\n"  # same text, whitespace aside
+    assert root_reply_metrics(trace) == {"root_reply_present": 1.0, "root_reply_differs": 0.0}
+    trace.root_reply = abstain()
+    assert root_reply_metrics(trace) == {"root_reply_present": 1.0, "root_reply_differs": 1.0}
+
+
+def test_final_reply_is_empty_without_sampled_assistant_messages():
+    b = TraceBuilder(data=SINGLE)
+    b.user("q")
+    b.assistant(answer(GP1, GP2), sampled=False)
+    trace = b.build()
+    assert final_reply(trace) == ""
+    assert evaluate(trace, SINGLE).breakdown.parse_failure_reason == "empty"
 
 
 def test_final_message_with_only_tool_calls_is_an_empty_reply():

@@ -26,6 +26,13 @@ output_dir = "outputs"
 # Run the agent as a local subprocess instead of a Prime sandbox.
 type = "subprocess"
 
+[env.agent.harness]
+# The `null` harness: a plain chat loop whose only tools are the taskset's MCP
+# tools (the KG tools). verifiers' default `bash` harness would also give the
+# model a shell and file editing on this machine, where it could read the items
+# file (gold triples and gold evidence IDs) and then fetch exactly those IDs.
+id = "null"
+
 [env.taskset]
 # Question items and the split to load. The defaults are the contracts' synthetic
 # fixtures, so a run works with no graph data. split = "heldout" is refused unless

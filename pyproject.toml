@@ -42,3 +42,6 @@ default-groups = ["dev", "data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end runs of scripts/run.sh against the scripted stub endpoint (no model); skip with -m \"not integration\"",
+]

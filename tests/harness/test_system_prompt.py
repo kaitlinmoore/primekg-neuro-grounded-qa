@@ -9,7 +9,14 @@ import re
 from mcp.server.mcpserver import MCPServer
 
 from harness.helpers import make_toolset, run
-from neuro_grounded_qa.contracts import Abstain, Answer, Claim, ParseFailure, parse_output
+from neuro_grounded_qa.contracts import (
+    Abstain,
+    Answer,
+    Claim,
+    EdgeEvidence,
+    ParseFailure,
+    parse_output,
+)
 from neuro_grounded_qa.taskset import render_system_prompt
 from neuro_grounded_qa.tools import TOOL_PREFIX, KGToolsetConfig
 
@@ -67,3 +74,25 @@ def test_prompt_states_the_configured_limits():
     prompt = render_system_prompt(KGToolsetConfig(max_calls=5, max_results=7))
     assert "at most 5 tool calls" in prompt
     assert "at most 7 items" in prompt
+
+
+def test_prompt_says_to_keep_the_order_of_directed_edges():
+    assert (
+        '- Edges with "directed": true must be stated with subject and object in the order '
+        "the tool result shows; other edges may be stated in either order."
+    ) in PROMPT.splitlines()
+    assert '"directed" (true or false)' in PROMPT  # the payload field is named
+
+
+def test_prompt_states_strict_citations():
+    assert (
+        '- Every ID in "cites" must come from your own tool results; a claim with any '
+        "other ID counts as unsupported."
+    ) in PROMPT.splitlines()
+    assert "count for nothing" not in PROMPT
+    assert "Background knowledge counts for nothing." in PROMPT
+
+
+def test_prompt_directed_field_matches_the_payload():
+    """The field the prompt names is the one tool payloads carry."""
+    assert "directed" in EdgeEvidence.model_fields

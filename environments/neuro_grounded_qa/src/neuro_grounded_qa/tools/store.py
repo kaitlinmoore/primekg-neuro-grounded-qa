@@ -7,7 +7,8 @@ real store, built from the downloaded graph, can plug in without touching the to
 
 **Formats today:** a ``.json`` file in the ``InMemoryEvidenceStore.from_records``
 format (``entities``, ``edges`` with entity-ID references, optional ``build_id``), the
-format of ``tests/fixtures/contracts/mini_store.json``.
+format of ``tests/fixtures/contracts/mini_store.json``. :func:`read_build_id` reads
+only the store's build ID, for run provenance.
 
 **Adding the real store:** whatever the store builder produces must satisfy
 ``contracts.EvidenceStore``. Add a branch to :func:`load_store` that recognizes its
@@ -47,6 +48,37 @@ def load_store(path: str | Path) -> EvidenceStore:
         if not isinstance(data, dict):
             raise ValueError(f"{path}: expected a JSON object with entities and edges")
         return InMemoryEvidenceStore.from_records(data)
+    raise ValueError(
+        f"{path}: unknown evidence store format (supported: a .json records file; "
+        "see neuro_grounded_qa.tools.store)"
+    )
+
+
+def read_build_id(path: str | Path) -> str:
+    """The ``build_id`` of the store at ``path``, without building the store.
+
+    Used by the host process to record which store a run used (``trace.info``),
+    where loading the whole store would be wasted work: only the tool server needs
+    it. For a ``.json`` records file this parses the JSON but builds no indexes; a
+    missing ``build_id`` reads as ``"fixture"``, as in
+    ``InMemoryEvidenceStore.from_records``.
+
+    **Adding the real store:** give it a branch here too, reading the ID from the
+    store's own metadata (for example a one-row metadata table, or a small sidecar
+    file next to it) so this stays cheap however large the store is.
+
+    Raises:
+        FileNotFoundError: if nothing exists at ``path``.
+        ValueError: as in :func:`load_store`.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"evidence store not found: {path}")
+    if path.is_file() and path.suffix == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"{path}: expected a JSON object with entities and edges")
+        return str(data.get("build_id", "fixture"))
     raise ValueError(
         f"{path}: unknown evidence store format (supported: a .json records file; "
         "see neuro_grounded_qa.tools.store)"
