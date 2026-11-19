@@ -1,0 +1,6 @@
+{
+  "description": "cites as a string, not a list; strict validation doesn't coerce.",
+  "text": "{\n  \"claims\": [\n    {\n      \"subject_id\": \"GENE_B\",\n      \"relation\": \"associated_with\",\n      \"object_id\": \"DIS_1\",\n      \"cites\": \"E:000002\"\n    }\n  ],\n  \"answer_text\": \"x\"\n}",
+  "expected_type": "ParseFailure",
+  "expected_reason": "schema"
+}

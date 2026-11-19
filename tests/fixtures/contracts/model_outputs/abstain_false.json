@@ -1,0 +1,6 @@
+{
+  "description": "abstain must be the literal true.",
+  "text": "{\n  \"abstain\": false,\n  \"reason\": \"not abstaining\"\n}",
+  "expected_type": "ParseFailure",
+  "expected_reason": "schema"
+}

@@ -1,0 +1,6 @@
+{
+  "description": "A prose answer citing IDs inline.",
+  "text": "Gene Alpha and Gene Beta are associated with Disease One [E:000001, E:000002].",
+  "expected_type": "ParseFailure",
+  "expected_reason": "not_json"
+}

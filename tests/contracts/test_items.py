@@ -1,0 +1,222 @@
+"""Contract tests for the question item schema."""
+
+import json
+
+import pytest
+import verifiers.v1 as vf
+from pydantic import ValidationError
+
+from contracts.builders import FIXTURES, TraceBuilder
+from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, QuestionItem
+
+
+def load_items() -> list[dict]:
+    lines = (FIXTURES / "items.jsonl").read_text().splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
+
+
+@pytest.fixture
+def raw_items() -> list[dict]:
+    return load_items()
+
+
+def by_qtype(raw_items, qtype, answerable=None) -> dict:
+    return next(
+        dict(r)
+        for r in raw_items
+        if r["qtype"] == qtype and answerable in (None, r["answerable"])
+    )
+
+
+def test_fixture_items_cover_every_allowed_label_pair(raw_items):
+    items = [QuestionItem.model_validate(r) for r in raw_items]
+    pairs = {(i.qtype, i.answerable) for i in items}
+    assert pairs == {(q, a) for q, allowed in QTYPE_ANSWERABLE.items() for a in allowed}
+
+
+def test_item_is_task_data(raw_items):
+    item = QuestionItem.model_validate(raw_items[0])
+    assert isinstance(item, vf.TaskData)
+    assert item.prompt_text == raw_items[0]["prompt"]
+
+
+def test_items_work_as_task_and_taskset_data(raw_items):
+    class ItemTask(vf.Task[QuestionItem]):
+        pass
+
+    class ItemTaskset(vf.Taskset[ItemTask, vf.TasksetConfig]):
+        def load(self):
+            return [ItemTask(QuestionItem.model_validate(r), self.config.task) for r in raw_items]
+
+    tasks = list(ItemTaskset(vf.TasksetConfig()))
+    assert [t.data.idx for t in tasks] == list(range(len(raw_items)))
+    assert all(isinstance(t.data, QuestionItem) for t in tasks)
+    assert len({t.key for t in tasks}) == len(tasks)
+
+
+def test_item_survives_trace_round_trip(raw_items):
+    # The reward reads gold off trace.task.data, so it must survive serialization.
+    item = QuestionItem.model_validate(by_qtype(raw_items, "multi_hop"))
+    trace = TraceBuilder(item).build()
+    typed = vf.Trace[QuestionItem, vf.State, vf.AgentConfig]
+    reloaded = typed.model_validate_json(trace.to_json())
+    assert reloaded.task.data == item
+
+
+def test_items_are_frozen(raw_items):
+    item = QuestionItem.model_validate(raw_items[0])
+    with pytest.raises(ValidationError):
+        item.answerable = "no"
+
+
+def test_misspelled_field_rejected(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["gold_point"] = bad.pop("gold_points")
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(bad)
+
+
+def test_answerable_no_rejects_gold_points(raw_items):
+    bad = by_qtype(raw_items, "unanswerable")
+    bad["gold_points"] = by_qtype(raw_items, "single_hop")["gold_points"]
+    bad["gold_evidence"] = by_qtype(raw_items, "single_hop")["gold_evidence"]
+    with pytest.raises(ValidationError, match="no gold points"):
+        QuestionItem.model_validate(bad)
+
+
+def test_answerable_no_rejects_gold_evidence(raw_items):
+    bad = by_qtype(raw_items, "unanswerable")
+    bad["gold_evidence"] = ["E:000001"]
+    with pytest.raises(ValidationError, match="no gold evidence"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize(
+    "qtype, answerable",
+    [("single_hop", "yes"), ("partial", "partial"), ("false_premise", "correctable")],
+)
+def test_answerable_items_require_gold_points(raw_items, qtype, answerable):
+    bad = by_qtype(raw_items, qtype, answerable)
+    bad["gold_points"] = []
+    with pytest.raises(ValidationError, match="at least one gold point"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize(
+    "qtype, answerable",
+    [
+        ("single_hop", "partial"),
+        ("multi_hop", "correctable"),
+        ("partial", "yes"),
+        ("unanswerable", "correctable"),
+        ("false_premise", "yes"),
+        ("false_premise", "partial"),
+    ],
+)
+def test_qtype_answerable_mismatch_rejected(raw_items, qtype, answerable):
+    bad = by_qtype(raw_items, qtype)
+    bad["answerable"] = answerable
+    with pytest.raises(ValidationError, match="allows answerable"):
+        QuestionItem.model_validate(bad)
+
+
+def test_gold_point_evidence_must_be_in_gold_evidence(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["gold_evidence"] = ["E:000001"]  # drops E:000002, which gp2 cites
+    with pytest.raises(ValidationError, match="not in gold_evidence"):
+        QuestionItem.model_validate(bad)
+
+
+def test_gold_point_needs_evidence(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["gold_points"][0] = {**bad["gold_points"][0], "evidence": []}
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("field", ["id", "prompt"])
+def test_id_and_prompt_required(raw_items, field):
+    bad = by_qtype(raw_items, "single_hop")
+    del bad[field]
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("field, value", [("id", ""), ("prompt", "   "), ("prompt", None)])
+def test_id_and_prompt_not_empty(raw_items, field, value):
+    bad = by_qtype(raw_items, "single_hop")
+    bad[field] = value
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(bad)
+
+
+def test_template_id_optional(raw_items):
+    raw = by_qtype(raw_items, "single_hop")
+    assert QuestionItem.model_validate(raw).template_id == "fx_genes_assoc_disease"
+    del raw["template_id"]
+    assert QuestionItem.model_validate(raw).template_id is None
+
+
+# --- false premises ----------------------------------------------------------
+
+
+def test_false_premise_requires_premise(raw_items):
+    for answerable in ("no", "correctable"):
+        bad = by_qtype(raw_items, "false_premise", answerable)
+        del bad["premise"]
+        with pytest.raises(ValidationError, match="premise is required"):
+            QuestionItem.model_validate(bad)
+
+
+def test_premise_forbidden_on_other_qtypes(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["premise"] = {"subject_id": "DRUG_Y", "relation": "indicated_for", "object_id": "DIS_1"}
+    with pytest.raises(ValidationError, match="premise is required"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_premise_cannot_equal_a_gold_point(raw_items, reverse):
+    bad = by_qtype(raw_items, "false_premise", "correctable")
+    gp = bad["gold_points"][0]
+    s, o = (gp["object_id"], gp["subject_id"]) if reverse else (gp["subject_id"], gp["object_id"])
+    bad["premise"] = {"subject_id": s, "relation": gp["relation"], "object_id": o}
+    with pytest.raises(ValidationError, match="same fact as gold point"):
+        QuestionItem.model_validate(bad)
+
+
+def test_correctable_item_holds_the_correction(raw_items):
+    item = QuestionItem.model_validate(by_qtype(raw_items, "false_premise", "correctable"))
+    assert item.premise.relation == "indicated_for"
+    assert [gp.relation for gp in item.gold_points] == ["contraindicated_for"]
+
+
+@pytest.mark.parametrize("bad_id", ["E:1", "GENE_A", "P:000001", "edge-1"])
+def test_malformed_gold_evidence_rejected(raw_items, bad_id):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["gold_evidence"] = [*bad["gold_evidence"], bad_id]
+    with pytest.raises(ValidationError, match="malformed gold_evidence"):
+        QuestionItem.model_validate(bad)
+
+
+def test_malformed_gold_point_evidence_rejected(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["gold_points"][0] = {**bad["gold_points"][0], "evidence": ["E:1"]}
+    with pytest.raises(ValidationError, match="malformed evidence IDs"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("evidence_scope", "graph+pubmed"),  # reserved for phase 2, not valid yet
+        ("split", "test"),
+        ("source", "llm"),
+        ("qtype", "comparison"),
+    ],
+)
+def test_closed_vocabularies(raw_items, field, value):
+    bad = by_qtype(raw_items, "single_hop")
+    bad[field] = value
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(bad)

@@ -1,0 +1,6 @@
+{
+  "description": "Duplicate keys, which JSON parsers resolve differently.",
+  "text": "{\"abstain\": true, \"reason\": \"a\", \"reason\": \"b\"}",
+  "expected_type": "ParseFailure",
+  "expected_reason": "schema"
+}
