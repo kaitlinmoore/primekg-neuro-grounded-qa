@@ -19,18 +19,28 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 - Git: small fixes (typos, wording, links, one-line config) go straight to main. Anything that changes behavior, an instrument, or a version goes on a branch with a pull request.
 - Commit with the repo's configured identity (GitHub no-reply address).
 - No AI attribution in commits or pull requests: no Co-Authored-By trailers, session links or "Generated with" footers. AI assistance is disclosed in the README instead.
+- Runs use `configs/local.toml` (local subprocess runtime). Every run names its model and endpoint explicitly. Prime Inference, Prime sandboxes and `prime eval push` are used only deliberately. Run outputs stay in `outputs/` (gitignored).
 
 ## Environment
-Git Bash on Windows, uv, Python version to be confirmed against current Verifiers requirements. Key deps: verifiers (v1, version pinned once confirmed).
+- WSL2 (Ubuntu), working on the Windows checkout through `/mnt/c/dev/GitHub/primekg-neuro-grounded-qa`. Reason: verifiers 0.4.1 doesn't import on native Windows (`fcntl`, `os.killpg`).
+- This deviates from the standard's WSL-filesystem rule on purpose, for one checkout shared with Windows tools. Tradeoff: slower file I/O for git and for anything that reads the code from `/mnt/c`; the venv is kept off `/mnt/c` (next bullet) to avoid the worst of it. When the venv is on `/mnt/c` (no direnv), `[tool.uv] link-mode = "copy"` in the root `pyproject.toml` handles the uv cache and the venv being on different filesystems.
+- The venv lives on the WSL filesystem at `$UV_PROJECT_ENVIRONMENT` (`~/.venvs/ngq-<checkout folder name>`), set by the committed `.envrc` through direnv. Each checkout or worktree needs `direnv allow` once. Without direnv, uv falls back to a `.venv` on `/mnt/c`, which is slow. Reason: `uv run pytest -q` took 1m18.6s with the `.venv` on `/mnt/c` and 5.4s with the venv on the WSL filesystem.
+- Run uv, pytest and vf-* only from WSL. The `.venv` is a Linux venv (`.venv/bin/`); don't run uv on this checkout from Windows.
+- Shell commands in this repo are plain bash run in WSL.
+- uv; Python 3.11; `verifiers==0.4.1`, imported as `import verifiers.v1 as vf`; `prime==0.22.0` through `uv tool install` (not a project dependency).
+- Layout: a virtual uv workspace root (tests, docs, configs, scripts, dev tools) plus the environment package `environments/neuro_grounded_qa/`, the only thing that ships to the Hub (ID `neuro-grounded-qa`).
 
 ## Working from a handoff
 Tasks on this project come as handoff files in `handoffs/`, which exists only on my machine and is gitignored. State doc: `claude/orchestrator_state.md` in the "Verifiers | Prime Intellect" claude.ai Project.
 - If your prompt names or attaches a handoff, use the orchestrated-handoffs skill in worker mode. If the skill isn't available: read the handoff first, then the files it points to; do only its scope; list decisions under open questions in its Report instead of making them; work on the branch it names; fill in its Report (or put it in your final message if you can't write the file).
 - Never commit, quote or link anything from `handoffs/`. Commit messages, PR descriptions and branch names never mention handoffs or task IDs.
 - Don't edit other handoffs or `handoffs/INDEX.md`.
+- Change only the paths your handoff's lane owns (ownership map in `handoffs/PLAN.md`).
 
 ## Project-specific
 - Kept distinct from biomed-kg-grounding-eval: that project compares semantic layers over fixed questions; this one holds the data fixed and studies the reward.
 - Rewards are computed in code from the trace. Retrieved evidence IDs come only from logged tool calls; claims are structured triples with cited IDs.
+- Retrieved evidence counts only when a tool result's `tool_call_id` matches a tool call in a model-sampled assistant message; prompt-supplied tool results never count.
+- Data terms are stated separately from the MIT code license: several PrimeKG sources are non-commercial or license-gated, so no graph data ships in the repo or the package.
 - Gold answers and answerability come from the graph via code. AI may draft and critique question items for the train split only, with provenance recorded per item. Labels used to validate the reward are mine alone: never generate, suggest or pre-fill them.
 - Earlier hackathon code (Patient-in-the-Graph) belongs to that team. Build this project's verifier fresh; don't copy from it.

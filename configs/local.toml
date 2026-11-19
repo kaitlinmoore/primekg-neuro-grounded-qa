@@ -1,0 +1,23 @@
+# Default run config for this project: keep runs on this machine.
+#
+# Use it with the `@` syntax, e.g.
+#   uv run vf-run neuro-grounded-qa @ configs/local.toml \
+#     -m <model> --client.base-url <endpoint-url> --client.api-key-var <ENV_VAR_NAME>
+#
+# Why this file exists: by default verifiers 0.4.1 runs the agent in a Prime
+# sandbox and sends prompts to Prime Inference with a default model. This config
+# switches the agent to the local subprocess runtime.
+#
+# It deliberately sets NO model and NO endpoint. Every run must pass `-m`,
+# `--client.base-url` and `--client.api-key-var` explicitly, so the model and
+# where prompts go (including any held-out items) are always a visible choice.
+# Note: vf-run does NOT enforce this. If `-m` is omitted it silently falls back
+# to its built-in default model on Prime Inference.
+
+# Run outputs (configs/ and traces.jsonl per run) go here. Gitignored: traces can
+# contain question items, including held-out ones.
+output_dir = "outputs"
+
+[env.agent.runtime]
+# Run the agent as a local subprocess instead of a Prime sandbox.
+type = "subprocess"
