@@ -166,7 +166,8 @@ rule, and it counts once, in S or in U.
 
 Claims carry no `directed` flag, so comparing two claims takes direction from the
 relation label: a relation is directed for this score if any retrieved edge, gold
-point or premise with that label is flagged (`scoring.directed_relations`). A directed
+point, premise or graph gap triple with that label is flagged
+(`scoring.directed_relations`). A directed
 fact and its reversal therefore stay two facts, and the false reversal can't hide in
 the correct claim's group.
 
@@ -223,7 +224,10 @@ Notes per type:
 - **`partial`**: gold points hold only the answerable part. A full answer that also
   names the unsupported part scores 1; without the flag, 1 − κ. An answer with no claims
   and only `unsupported_parts` scores κ while `flag_only_counts` is True (v0), 0
-  otherwise.
+  otherwise. Items now name the parts the graph can't support (`graph_gaps`: each a
+  description, plus the absent triple where there is one), for grading and for any
+  later check of flag text; v0 doesn't score flags against them, so any non-blank flag
+  earns κ.
 - **`no`** (unanswerable, and false premises absent from the graph): 1 for abstaining,
   0 for any answer, including one made only of true supported claims or only of
   `unsupported_parts`. A claim restating the premise is unsupported by construction (the
@@ -348,8 +352,8 @@ rewards into `trace.reward`; and skipping scoring for format-violation traces.
   but the reward doesn't penalize it (settled 2026-11-19: PrimeKG's stored order is
   arbitrary for these).
 - **Direction for claim-vs-claim comparison comes from what the score sees.** If a
-  directed relation appears in no retrieved edge, gold point or premise, deduplication
-  treats it as undirected. Such claims are unsupported anyway (no retrieved edge states
+  directed relation appears in no retrieved edge, gold point, premise or graph gap
+  triple, deduplication treats it as undirected. Such claims are unsupported anyway (no retrieved edge states
   them), so this changes at most how many unsupported facts are counted.
 - **Free text is unscored.** `answer_text` can contradict the claims, and
   `unsupported_parts` can say anything; neither changes the score.

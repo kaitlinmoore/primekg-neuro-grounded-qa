@@ -11,7 +11,7 @@ Each module fixes one interface as code, with contract tests in ``tests/contract
   side is flagged ``directed``.
 - ``items``: the question item schema, a ``vf.TaskData`` subclass carrying gold
   triples, gold evidence, answerability (including correctable false premises),
-  evidence scope and provenance.
+  the graph gaps of partially answerable questions, evidence scope and provenance.
 - ``output``: the model's final answer format (claims as graph-ID triples citing
   evidence IDs, or an abstention) and its strict parser ``parse_output``.
 - ``trace``: the JSON payload evidence-returning tools emit, and ``retrieved_ids``,
@@ -48,6 +48,7 @@ from neuro_grounded_qa.contracts.items import (
     Answerable,
     EvidenceScope,
     GoldPoint,
+    GraphGap,
     ItemSource,
     PremiseTriple,
     QType,
@@ -100,6 +101,7 @@ __all__ = [
     "Answerable",
     "EvidenceScope",
     "GoldPoint",
+    "GraphGap",
     "ItemSource",
     "PremiseTriple",
     "QType",

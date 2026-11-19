@@ -364,6 +364,24 @@ def test_directed_relations_come_from_retrieved_edges_and_the_item():
     assert scoring.directed_relations(item, {}) == {"associated_with"}
 
 
+def test_directed_graph_gap_triple_keeps_reversed_claims_apart():
+    """A directed relation that appears only as a gap triple (no retrieved edge, gold
+    point or premise carries it) is still directed when claims are compared, so a
+    claim and its reversal on it are two unsupported facts, not one."""
+    gap = {"description": "whether Gene Delta causes Disease One",
+           "triple": {"subject_id": "GENE_D", "relation": "causes", "object_id": "DIS_1",
+                      "directed": True}}
+    item = type(PARTIAL).model_validate({**PARTIAL.model_dump(), "graph_gaps": [gap]})
+    retrieved = evidence("E:000001", "E:000002")
+    assert scoring.directed_relations(item, retrieved) == {"causes"}
+    assert scoring.directed_relations(PARTIAL, retrieved) == frozenset()
+    forward = claim("GENE_D", "causes", "DIS_1", "E:000001")
+    backward = claim("DIS_1", "causes", "GENE_D", "E:000001")
+    b = run(item, answer(GP1, GP2, forward, backward), retrieved=retrieved)
+    assert b.n_facts == 4 and b.n_duplicates == 0
+    assert (b.n_supported, b.n_unsupported) == (2, 2)
+
+
 def test_same_entities_different_relation_are_different_facts():
     other = claim("GENE_A", "member_of", "DIS_1", "E:000001")  # wrong relation
     b = run(SINGLE, answer(GP1, other))

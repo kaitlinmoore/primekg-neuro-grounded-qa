@@ -7,7 +7,7 @@ import verifiers.v1 as vf
 from pydantic import ValidationError
 
 from contracts.builders import FIXTURES, TraceBuilder
-from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, QuestionItem
+from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, GraphGap, QuestionItem
 
 
 def load_items() -> list[dict]:
@@ -337,3 +337,231 @@ def test_different_relations_may_have_different_flags():
     raw["gold_evidence"].append("E:000013")
     item = QuestionItem.model_validate(raw)
     assert [gp.directed for gp in item.gold_points] == [False, False, True]
+
+
+# --- graph gaps: what partial items can't answer from the graph -----------------------
+# The fixture partial item asks about GENE_A/GENE_B (answerable) and about a drug acting
+# on GENE_D (no edges). Its one gap has no triple: the drug is unknown.
+
+
+def absent_triple(subject_id="GENE_D", relation="associated_with", object_id="DIS_1",
+                  directed=False) -> dict:
+    return {"subject_id": subject_id, "relation": relation, "object_id": object_id,
+            "directed": directed}
+
+
+def gap(triple: dict | None = None, description: str = "the Gene Delta part") -> dict:
+    return {"description": description, "triple": triple}
+
+
+def partial_with(*gaps: dict) -> dict:
+    raw = by_qtype(load_items(), "partial")
+    raw["graph_gaps"] = list(gaps)
+    return raw
+
+
+def partial_with_directed_gold(*gaps: dict) -> dict:
+    """The fixture partial item plus a directed gold point, DIS_3 subtype_of DIS_G
+    (the fixture store's directed edge E:000013)."""
+    raw = partial_with(*gaps)
+    raw["gold_points"].append(
+        {"id": "gp3", "subject_id": "DIS_3", "relation": "subtype_of",
+         "object_id": "DIS_G", "evidence": ["E:000013"], "directed": True}
+    )
+    raw["gold_evidence"].append("E:000013")
+    return raw
+
+
+def test_fixture_partial_item_names_its_graph_gap(raw_items):
+    item = QuestionItem.model_validate(by_qtype(raw_items, "partial"))
+    [g] = item.graph_gaps
+    assert isinstance(g, GraphGap)
+    assert "Gene Delta" in g.description
+    assert g.triple is None
+
+
+def test_non_partial_fixture_items_have_no_graph_gaps(raw_items):
+    for item in (QuestionItem.model_validate(r) for r in raw_items):
+        assert bool(item.graph_gaps) == (item.answerable == "partial")
+
+
+@pytest.mark.parametrize("value", ["missing", []])
+def test_partial_item_requires_a_graph_gap(raw_items, value):
+    bad = by_qtype(raw_items, "partial")
+    if value == "missing":
+        del bad["graph_gaps"]
+    else:
+        bad["graph_gaps"] = value
+    with pytest.raises(ValidationError, match='non-empty for answerable="partial"'):
+        QuestionItem.model_validate(bad)
+
+
+def test_partial_item_with_a_triple_validates():
+    item = QuestionItem.model_validate(partial_with(gap(absent_triple())))
+    t = item.graph_gaps[0].triple
+    assert (t.subject_id, t.relation, t.object_id, t.directed) == (
+        "GENE_D", "associated_with", "DIS_1", False
+    )
+
+
+def test_partial_item_with_two_gaps_validates():
+    item = QuestionItem.model_validate(
+        partial_with(
+            gap(None, "which drug acts on Gene Delta"),
+            gap(absent_triple("GENE_D", "associated_with", "DIS_1"), "Gene Delta and Disease One"),
+        )
+    )
+    assert [g.description for g in item.graph_gaps] == [
+        "which drug acts on Gene Delta",
+        "Gene Delta and Disease One",
+    ]
+    assert item.graph_gaps[0].triple is None and item.graph_gaps[1].triple is not None
+
+
+def test_triple_defaults_to_none():
+    raw = partial_with(gap())
+    del raw["graph_gaps"][0]["triple"]
+    assert QuestionItem.model_validate(raw).graph_gaps[0].triple is None
+
+
+@pytest.mark.parametrize(
+    "qtype, answerable",
+    [
+        ("single_hop", "yes"),
+        ("multi_hop", "yes"),
+        ("unanswerable", "no"),
+        ("false_premise", "no"),
+        ("false_premise", "correctable"),  # the premise already names what's wrong
+    ],
+)
+def test_graph_gaps_rejected_on_non_partial_items(raw_items, qtype, answerable):
+    bad = by_qtype(raw_items, qtype, answerable)
+    bad["graph_gaps"] = [gap()]
+    with pytest.raises(ValidationError, match="empty otherwise"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("description", ["", "   ", "\n\t"])
+def test_blank_description_rejected(description):
+    with pytest.raises(ValidationError, match="description"):
+        QuestionItem.model_validate(partial_with(gap(description=description)))
+
+
+def test_blank_description_in_a_later_gap_rejected():
+    with pytest.raises(ValidationError, match="description"):
+        QuestionItem.model_validate(partial_with(gap(), gap(description=" ")))
+
+
+def test_missing_description_rejected():
+    raw = partial_with(gap())
+    del raw["graph_gaps"][0]["description"]
+    with pytest.raises(ValidationError, match="description"):
+        QuestionItem.model_validate(raw)
+
+
+def test_graph_gap_rejects_extra_fields():
+    raw = partial_with(gap())
+    raw["graph_gaps"][0]["triples"] = []
+    with pytest.raises(ValidationError):
+        QuestionItem.model_validate(raw)
+
+
+def test_graph_gap_is_frozen():
+    item = QuestionItem.model_validate(partial_with(gap()))
+    with pytest.raises(ValidationError):
+        item.graph_gaps[0].description = "changed"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_undirected_gap_triples_rejected(reverse):
+    first = absent_triple("GENE_D", "associated_with", "DIS_1")
+    s, o = ("DIS_1", "GENE_D") if reverse else ("GENE_D", "DIS_1")
+    second = absent_triple(s, "associated_with", o)
+    with pytest.raises(ValidationError, match="two graph gap triples state the same fact"):
+        QuestionItem.model_validate(partial_with(gap(first, "one"), gap(second, "two")))
+
+
+def test_duplicate_directed_gap_triples_rejected():
+    t = absent_triple("GENE_D", "subtype_of", "DIS_G", directed=True)
+    with pytest.raises(ValidationError, match="two graph gap triples state the same fact"):
+        QuestionItem.model_validate(partial_with(gap(t, "one"), gap(dict(t), "two")))
+
+
+def test_reversed_directed_gap_triples_are_two_facts():
+    a = absent_triple("GENE_D", "subtype_of", "DIS_G", directed=True)
+    b = absent_triple("DIS_G", "subtype_of", "GENE_D", directed=True)
+    item = QuestionItem.model_validate(partial_with(gap(a, "one"), gap(b, "two")))
+    assert len(item.graph_gaps) == 2
+
+
+def test_gaps_without_triples_may_repeat():
+    # Only triples are compared; descriptions are free text and not checked.
+    item = QuestionItem.model_validate(partial_with(gap(), gap()))
+    assert len(item.graph_gaps) == 2
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_gap_triple_equal_to_an_undirected_gold_point_is_rejected(reverse):
+    # gp1 is GENE_A associated_with DIS_1, unflagged: either order is the same fact.
+    s, o = ("DIS_1", "GENE_A") if reverse else ("GENE_A", "DIS_1")
+    with pytest.raises(ValidationError, match="same fact as gold point 'gp1'"):
+        QuestionItem.model_validate(partial_with(gap(absent_triple(s, "associated_with", o))))
+
+
+def test_second_gap_triple_equal_to_a_gold_point_is_rejected():
+    clash = absent_triple("GENE_B", "associated_with", "DIS_1")
+    with pytest.raises(ValidationError, match="same fact as gold point 'gp2'"):
+        QuestionItem.model_validate(partial_with(gap(absent_triple()), gap(clash)))
+
+
+def test_gap_triple_equal_to_a_directed_gold_point_is_rejected():
+    t = absent_triple("DIS_3", "subtype_of", "DIS_G", directed=True)
+    with pytest.raises(ValidationError, match="same fact as gold point 'gp3'"):
+        QuestionItem.model_validate(partial_with_directed_gold(gap(t)))
+
+
+def test_gap_triple_reversing_a_directed_gold_point_is_valid():
+    # The reverse of a directed fact is a different fact, as for premises.
+    t = absent_triple("DIS_G", "subtype_of", "DIS_3", directed=True)
+    item = QuestionItem.model_validate(partial_with_directed_gold(gap(t)))
+    assert item.graph_gaps[0].triple.directed
+
+
+def test_gap_triple_with_a_flag_differing_from_the_gold_points_is_rejected():
+    # The gold points on associated_with are unflagged; a directed gap triple on it isn't.
+    t = absent_triple("GENE_D", "associated_with", "DIS_1", directed=True)
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'associated_with'"):
+        QuestionItem.model_validate(partial_with(gap(t)))
+
+
+def test_unflagged_gap_triple_on_a_directed_gold_relation_is_rejected():
+    t = absent_triple("DIS_G", "subtype_of", "DIS_3", directed=False)
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'subtype_of'"):
+        QuestionItem.model_validate(partial_with_directed_gold(gap(t)))
+
+
+def test_mixed_flags_between_two_gap_triples_are_rejected():
+    a = absent_triple("GENE_D", "subtype_of", "DIS_G", directed=True)
+    b = absent_triple("GENE_C", "subtype_of", "DIS_G", directed=False)
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'subtype_of'"):
+        QuestionItem.model_validate(partial_with(gap(a, "one"), gap(b, "two")))
+
+
+def test_gap_triple_on_its_own_relation_may_be_directed():
+    t = absent_triple("GENE_D", "subtype_of", "DIS_G", directed=True)
+    item = QuestionItem.model_validate(partial_with(gap(t)))
+    assert item.graph_gaps[0].triple.directed
+    assert not any(gp.directed for gp in item.gold_points)
+
+
+@pytest.mark.parametrize(
+    "gaps",
+    [[gap()], [gap(absent_triple())], [gap(), gap(absent_triple(directed=False), "two")]],
+)
+def test_graph_gaps_survive_trace_round_trip(gaps):
+    item = QuestionItem.model_validate(partial_with(*gaps))
+    trace = TraceBuilder(item).build()
+    typed = vf.Trace[QuestionItem, vf.State, vf.AgentConfig]
+    reloaded = typed.model_validate_json(trace.to_json())
+    assert reloaded.task.data == item
+    assert reloaded.task.data.graph_gaps == item.graph_gaps
