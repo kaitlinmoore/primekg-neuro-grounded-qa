@@ -1,0 +1,35 @@
+# Workspace root for primekg-neuro-grounded-qa.
+#
+# The root is a *virtual* uv workspace root: it has no [project] table, so it is
+# never built or installed as a package. It exists to hold the research code
+# (tests, docs, practice notebooks, scripts, configs) and its dev tooling, and to
+# tie the environment package into one lockfile.
+#
+# The only thing that ships (to the Prime Intellect Hub) is the workspace member
+# environments/neuro_grounded_qa/, which has its own pyproject.toml and pins.
+
+[tool.uv.workspace]
+members = ["environments/*"]
+
+[tool.uv.sources]
+# Resolve the environment package from this workspace (editable), not from PyPI.
+neuro-grounded-qa = { workspace = true }
+
+[dependency-groups]
+# `uv sync` installs the `dev` group by default, so this is what puts the
+# environment package (editable) and the test/notebook tooling into .venv.
+dev = [
+    "neuro-grounded-qa",
+    "pytest",
+    "ipykernel",
+]
+
+[tool.uv]
+# The uv cache lives in the WSL filesystem and this checkout's .venv lives on
+# /mnt/c (the Windows drive). Hardlinks can't cross filesystems, so without this
+# uv warns on every sync and falls back to copying anyway. Setting it makes the
+# copy explicit and silences the warning.
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
