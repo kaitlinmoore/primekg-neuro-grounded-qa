@@ -1,0 +1,5 @@
+node_id,node_type,node_name,node_source,group_name_auto,group_name_bert
+4975,disease,Alzheimer disease,MONDO,Alzheimer disease,Alzheimer disease
+11913,disease,Alzheimer disease 3,MONDO,Alzheimer disease,Alzheimer disease
+9,disease,lonely group type 9,MONDO,lonely group,lonely group
+7,disease,lonely group type 7,MONDO,lonely group,lonely group

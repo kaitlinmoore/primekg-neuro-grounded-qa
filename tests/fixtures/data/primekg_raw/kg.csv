@@ -1,0 +1,35 @@
+relation,display_relation,x_index,x_id,x_type,x_name,x_source,y_index,y_id,y_type,y_name,y_source
+disease_protein,associated with,3,4975_11913,disease,Alzheimer disease,MONDO_grouped,0,351,gene/protein,APP,NCBI
+disease_protein,associated with,4,100087,disease,familial Alzheimer disease,MONDO,1,4571,gene/protein,TRNP,NCBI
+drug_protein,target,6,DB00843,drug,Donepezil,DrugBank,0,351,gene/protein,APP,NCBI
+drug_protein,enzyme,6,DB00843,drug,Donepezil,DrugBank,0,351,gene/protein,APP,NCBI
+indication,indication,6,DB00843,drug,Donepezil,DrugBank,3,4975_11913,disease,Alzheimer disease,MONDO_grouped
+disease_phenotype_positive,phenotype present,3,4975_11913,disease,Alzheimer disease,MONDO_grouped,7,2354,effect/phenotype,Memory impairment,HPO
+disease_disease,parent-child,5,4847,disease,dementia,MONDO,3,4975_11913,disease,Alzheimer disease,MONDO_grouped
+disease_disease,parent-child,3,4975_11913,disease,Alzheimer disease,MONDO_grouped,4,100087,disease,familial Alzheimer disease,MONDO
+anatomy_anatomy,parent-child,9,956,anatomy,cerebral cortex,UBERON,8,955,anatomy,brain,UBERON
+anatomy_protein_present,expression present,0,351,gene/protein,APP,NCBI,8,955,anatomy,brain,UBERON
+anatomy_protein_present,expression present,9,956,anatomy,cerebral cortex,UBERON,2,4571,gene/protein,MT-TP,NCBI
+protein_protein,ppi,0,351,gene/protein,APP,NCBI,1,4571,gene/protein,TRNP,NCBI
+protein_protein,ppi,2,4571,gene/protein,MT-TP,NCBI,0,351,gene/protein,APP,NCBI
+exposure_exposure,parent-child,12,D008670,exposure,metals,CTD,11,D007854,exposure,lead,CTD
+exposure_protein,interacts with,11,D007854,exposure,lead,CTD,0,351,gene/protein,APP,NCBI
+disease_protein,associated with,10,9_7,disease,lonely group,MONDO_grouped,2,4571,gene/protein,MT-TP,NCBI
+phenotype_phenotype,parent-child,13,1,effect/phenotype,All,HPO,7,2354,effect/phenotype,Memory impairment,HPO
+disease_protein,associated with,0,351,gene/protein,APP,NCBI,3,4975_11913,disease,Alzheimer disease,MONDO_grouped
+disease_protein,associated with,1,4571,gene/protein,TRNP,NCBI,4,100087,disease,familial Alzheimer disease,MONDO
+drug_protein,target,0,351,gene/protein,APP,NCBI,6,DB00843,drug,Donepezil,DrugBank
+drug_protein,enzyme,0,351,gene/protein,APP,NCBI,6,DB00843,drug,Donepezil,DrugBank
+indication,indication,3,4975_11913,disease,Alzheimer disease,MONDO_grouped,6,DB00843,drug,Donepezil,DrugBank
+disease_phenotype_positive,phenotype present,7,2354,effect/phenotype,Memory impairment,HPO,3,4975_11913,disease,Alzheimer disease,MONDO_grouped
+disease_disease,parent-child,3,4975_11913,disease,Alzheimer disease,MONDO_grouped,5,4847,disease,dementia,MONDO
+disease_disease,parent-child,4,100087,disease,familial Alzheimer disease,MONDO,3,4975_11913,disease,Alzheimer disease,MONDO_grouped
+anatomy_anatomy,parent-child,8,955,anatomy,brain,UBERON,9,956,anatomy,cerebral cortex,UBERON
+anatomy_protein_present,expression present,8,955,anatomy,brain,UBERON,0,351,gene/protein,APP,NCBI
+anatomy_protein_present,expression present,2,4571,gene/protein,MT-TP,NCBI,9,956,anatomy,cerebral cortex,UBERON
+protein_protein,ppi,1,4571,gene/protein,TRNP,NCBI,0,351,gene/protein,APP,NCBI
+protein_protein,ppi,0,351,gene/protein,APP,NCBI,2,4571,gene/protein,MT-TP,NCBI
+exposure_exposure,parent-child,11,D007854,exposure,lead,CTD,12,D008670,exposure,metals,CTD
+exposure_protein,interacts with,0,351,gene/protein,APP,NCBI,11,D007854,exposure,lead,CTD
+disease_protein,associated with,2,4571,gene/protein,MT-TP,NCBI,10,9_7,disease,lonely group,MONDO_grouped
+phenotype_phenotype,parent-child,7,2354,effect/phenotype,Memory impairment,HPO,13,1,effect/phenotype,All,HPO
