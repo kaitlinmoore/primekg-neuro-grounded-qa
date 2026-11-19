@@ -1,0 +1,30 @@
+{
+  "_comment": "Synthetic full graph for qgen_checks tests. 'index_of' maps store entity IDs to graph node IDs. 'edges' are undirected (u, v, relation) facts: the store's edges plus facts the subgraph left out (n_D_B-n_G_2, and the chain n_X_1-n_G_9-n_D_A1 through node n_G_9, which is not in the store). 'hierarchy_first_rows' are (relation, x, y) first rows in file order: disease_disease is parent-first (child is y), anatomy_anatomy child-first (child is x).",
+  "index_of": {
+    "D_A": "n_D_A", "D_A1": "n_D_A1", "D_B": "n_D_B", "G_1": "n_G_1", "G_2": "n_G_2",
+    "G_3": "n_G_3", "G_S": "n_G_S", "P_S": "n_P_S", "P_1": "n_P_1", "X_1": "n_X_1",
+    "primekg:77": "n_77", "AN_C": "n_AN_C", "AN_P": "n_AN_P"
+  },
+  "edges": [
+    ["n_D_A", "n_G_1", "disease_protein"],
+    ["n_D_A", "n_G_2", "disease_protein"],
+    ["n_D_A", "n_G_3", "disease_protein"],
+    ["n_D_B", "n_G_1", "disease_protein"],
+    ["n_D_A", "n_D_A1", "disease_disease"],
+    ["n_X_1", "n_G_1", "drug_protein/target"],
+    ["n_X_1", "n_D_A", "contraindication"],
+    ["n_D_B", "n_P_S", "disease_phenotype_positive"],
+    ["n_D_B", "n_G_S", "disease_protein"],
+    ["n_D_B", "n_77", "disease_protein"],
+    ["n_D_A1", "n_P_1", "disease_phenotype_positive"],
+    ["n_D_B", "n_G_2", "disease_protein"],
+    ["n_X_1", "n_G_9", "drug_protein/target"],
+    ["n_G_9", "n_D_A1", "disease_protein"],
+    ["n_AN_C", "n_AN_P", "anatomy_anatomy"]
+  ],
+  "hierarchy_first_rows": [
+    ["disease_disease", "n_D_A", "n_D_A1"],
+    ["anatomy_anatomy", "n_AN_C", "n_AN_P"]
+  ],
+  "child_end": {"disease_disease": "y", "anatomy_anatomy": "x"}
+}
