@@ -25,9 +25,11 @@ and writes a store directory in the format of :mod:`neuro_grounded_qa.data.store
    degree is distinct neighbours in the full graph; ``N1`` is the seed plus its
    neighbours; (c) keeps edges among ``N1`` plus every edge touching the seed or a
    1-hop node whose degree is at or below the chosen percentile.
-5. **Entity IDs** (:func:`entity_ids`): ``<x_source>:<x_id>``, with grouped MONDO
-   nodes as ``MONDO_grouped:<member>`` and ``primekg:<x_index>`` for IDs that
-   collide. Computed over the whole graph, so a node's ID doesn't depend on the seed.
+5. **Entity IDs** (:func:`entity_ids`): the standard CURIE for each node's source
+   ID (:func:`curie`; ``HPO`` ``2354`` → ``HP:0002354``, ``NCBI`` ``351`` →
+   ``NCBIGene:351``), ``group:<slug of the name>`` for PrimeKG's grouped MONDO nodes
+   (:func:`group_ids`), and ``primekg:<x_index>`` for CURIEs that collide. Computed
+   over the whole graph, so a node's ID doesn't depend on the seed.
 6. **Orient** each edge (:func:`orient`). Hierarchy relations become subject = child,
    object = parent, ``directed=True``, using PrimeKG's file-order convention. Other
    edges get a fixed, readable orientation (the relation name's first type is the
@@ -53,6 +55,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -63,7 +66,7 @@ from typing import Any
 
 from neuro_grounded_qa.data import store_files as sf
 
-BUILDER_VERSION = "1.0.0"
+BUILDER_VERSION = "2.0.0"
 """Semantic version of this builder. Bump it with any change that can change a built
 store's content; it is part of the ``build_id``."""
 
@@ -133,8 +136,31 @@ edges stay undirected: the types already fix the reading, so a claim may state t
 in either order."""
 
 GROUPED_SOURCE = "MONDO_grouped"
+GROUP_PREFIX = "group"
 FALLBACK_PREFIX = "primekg"
 MIN_ID_DIGITS = 6
+
+SOURCE_PREFIXES: dict[str, dict[str, Any]] = {
+    "CTD": {"prefix": "MESH", "pattern": "[CD][0-9]+"},
+    "DrugBank": {"prefix": "DrugBank", "pattern": "DB[0-9]{5}"},
+    "GO": {"prefix": "GO", "pattern": "[0-9]{1,7}", "zero_pad": 7},
+    "HPO": {"prefix": "HP", "pattern": "[0-9]{1,7}", "zero_pad": 7},
+    "MONDO": {"prefix": "MONDO", "pattern": "[0-9]{1,7}", "zero_pad": 7},
+    "NCBI": {"prefix": "NCBIGene", "pattern": "[0-9]+"},
+    "REACTOME": {"prefix": "REACT", "pattern": "R-HSA-[0-9]+"},
+    "UBERON": {"prefix": "UBERON", "pattern": "[0-9]{1,7}", "zero_pad": 7},
+}
+"""PrimeKG ``x_source`` → the standard CURIE form of its IDs, for every source except
+the grouped MONDO nodes (:func:`group_ids`). PrimeKG strips the ontologies' leading
+zeros (``MONDO 7739``) and names sources its own way (``HPO``, ``NCBI``, ``CTD``); a
+model that knows the standard form (``MONDO:0007739``, ``HP:0002354``,
+``NCBIGene:351``) may "correct" an ID and then fail exact match, so the store uses the
+standard form. The prefix is each namespace's most common form in OBO, Bioregistry
+and Biolink use: ``HP`` (not ``HPO``), ``NCBIGene`` for NCBI Gene IDs, ``MESH`` for
+CTD's chemical IDs (they are MeSH IDs, e.g. ``D007854``), ``REACT`` for Reactome;
+``DrugBank`` keeps PrimeKG's spelling. ``zero_pad`` restores the ontology's 7-digit
+local IDs. ``pattern`` is what the raw ``x_id`` must match; a mismatch, or a source
+not listed here, fails the build instead of being guessed."""
 
 RULES: dict[str, Any] = {
     "deduplicate": "one edge per (relation label, unordered node pair); PrimeKG's reversed copies collapse",
@@ -149,10 +175,12 @@ RULES: dict[str, Any] = {
     "undirected_same_type": {"relations": list(UNDIRECTED_SAME_TYPE), "subject": "smaller entity ID"},
     "subject_type": SUBJECT_TYPE,
     "entity_id": {
-        "form": "<x_source>:<x_id>",
-        "grouped": "MONDO_grouped:<member>; member = the MONDO number whose kg_grouped_diseases.csv "
-        "name equals the node name, else the numerically smallest member",
-        "collision_fallback": "primekg:<x_index>, for every node whose ID is shared with another node",
+        "form": "standard CURIE <prefix>:<x_id, zero-padded where the ontology pads>",
+        "prefixes": SOURCE_PREFIXES,
+        "grouped": "group:<slug>; slug = node name lowercased, each run of characters outside "
+        "[a-z0-9] -> '_', leading/trailing '_' stripped; nodes sharing a slug get _2, _3, ... "
+        "in order of (smallest member MONDO number, x_index), the first keeps the bare slug",
+        "collision_fallback": "primekg:<x_index>, for every node whose CURIE is shared with another node",
     },
     "evidence_id": {"form": "E:<zero-padded number>", "min_digits": MIN_ID_DIGITS,
                     "order": ["relation", "subject_id", "object_id"]},
@@ -251,53 +279,111 @@ def relation_label(relation: str, display_relation: str) -> str:
     return f"{relation}/{display_relation}" if relation in QUALIFIED_RELATIONS else relation
 
 
-def grouped_member(node_name: str, members: list[str], member_names: Mapping[str, str]) -> str:
-    """The member number a grouped MONDO node's ID uses.
+def curie(source: str, x_id: str) -> str:
+    """The standard CURIE for a PrimeKG node's ``x_source`` and ``x_id``.
 
-    The member whose own MONDO name equals the node's name (case-insensitively), so
-    ``Alzheimer disease`` (21 members) becomes ``MONDO_grouped:4975``, MONDO's
-    "Alzheimer disease". If no member's name matches, the numerically smallest
-    member. Every MONDO number belongs to at most one group, so either choice is
-    unique; :func:`entity_ids` still checks.
+    Uses :data:`SOURCE_PREFIXES`: ``curie("HPO", "2354") == "HP:0002354"``,
+    ``curie("NCBI", "351") == "NCBIGene:351"``.
+
+    Raises:
+        ValueError: for a source with no rule (including ``MONDO_grouped``, which
+            :func:`group_ids` handles) or an ``x_id`` that doesn't match the source's
+            pattern.
     """
-    want = node_name.casefold()
-    for m in members:
-        if member_names.get(m, "").casefold() == want:
-            return m
-    return min(members, key=lambda m: (int(m) if m.isdigit() else float("inf"), m))
+    rule = SOURCE_PREFIXES.get(source)
+    if rule is None:
+        raise ValueError(f"no CURIE rule for source {source!r}")
+    if not re.fullmatch(rule["pattern"], x_id):
+        raise ValueError(f"{source} ID {x_id!r} doesn't match {rule['pattern']!r}")
+    local = x_id.zfill(rule["zero_pad"]) if "zero_pad" in rule else x_id
+    return f"{rule['prefix']}:{local}"
 
 
-def entity_ids(
-    nodes: Iterable[tuple[str, str, str, str]], member_names: Mapping[str, str]
-) -> dict[str, tuple[str, str]]:
+def slugify(name: str) -> str:
+    """A group name as an ID slug: lowercase, each run of characters outside ``a-z0-9``
+    replaced by ``_``, leading and trailing ``_`` removed.
+    ``"Parkinson disease, autosomal dominant"`` → ``"parkinson_disease_autosomal_dominant"``.
+
+    Raises:
+        ValueError: if nothing is left (a name with no letters or digits).
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    if not slug:
+        raise ValueError(f"group name {name!r} has no letters or digits to make a slug")
+    return slug
+
+
+def _member_key(x_id: str, index: str) -> tuple[int, int, str]:
+    """Order for groups sharing a slug: smallest member MONDO number, then x_index."""
+    members = [int(m) for m in x_id.split("_") if m.isdigit()]
+    return (min(members) if members else sys.maxsize, int(index) if index.isdigit() else sys.maxsize, index)
+
+
+def group_ids(groups: Iterable[tuple[str, str, str]]) -> dict[str, tuple[str, int]]:
+    """IDs for PrimeKG's grouped MONDO nodes: ``group:<slug of the node name>``.
+
+    PrimeKG merges MONDO diseases with the same name into one node whose ``x_id``
+    joins their numbers (``4975_11913_…``), too long to copy and not one MONDO term,
+    so the ID comes from the name instead (``group:alzheimer_disease``) and the prefix
+    keeps it from posing as a MONDO ID. If several groups share a slug, they are
+    ordered by (smallest member MONDO number, ``x_index``); the first keeps the bare
+    slug and the rest get ``_2``, ``_3``…, skipping any suffix another slug already
+    uses.
+
+    Args:
+        groups: ``(x_index, x_id, x_name)`` for every grouped node in the graph.
+
+    Returns:
+        ``x_index`` → ``(entity_id, suffix)``, where suffix is 0 for a bare slug and
+        2, 3, … for a suffixed one.
+    """
+    by_slug: dict[str, list[tuple[str, str]]] = {}
+    for index, x_id, name in groups:
+        by_slug.setdefault(slugify(name), []).append((index, x_id))
+    taken = set(by_slug)
+    out: dict[str, tuple[str, int]] = {}
+    for slug in sorted(by_slug):
+        ordered = sorted(by_slug[slug], key=lambda g: _member_key(g[1], g[0]))
+        out[ordered[0][0]] = (f"{GROUP_PREFIX}:{slug}", 0)
+        k = 1
+        for index, _x_id in ordered[1:]:
+            k += 1
+            while f"{slug}_{k}" in taken:
+                k += 1
+            taken.add(f"{slug}_{k}")
+            out[index] = (f"{GROUP_PREFIX}:{slug}_{k}", k)
+    return out
+
+
+def group_members(x_id: str) -> list[str]:
+    """A grouped node's member MONDO terms as CURIEs, in PrimeKG's order."""
+    return [curie("MONDO", m) for m in x_id.split("_")]
+
+
+def entity_ids(nodes: Iterable[tuple[str, str, str, str]]) -> dict[str, tuple[str, str]]:
     """Assign every node its store entity ID.
 
     Args:
         nodes: ``(x_index, x_id, x_source, x_name)`` for every node in the graph.
-        member_names: MONDO number → name, from ``kg_grouped_diseases.csv``.
 
     Returns:
-        ``x_index`` → ``(entity_id, scheme)``, where scheme is ``source``
-        (``<x_source>:<x_id>``), ``grouped`` (``MONDO_grouped:<member>``) or
-        ``fallback`` (``primekg:<x_index>``, used for every node whose preferred ID is
-        shared with another node).
+        ``x_index`` → ``(entity_id, scheme)``, where scheme is ``curie``
+        (:func:`curie`), ``group`` (:func:`group_ids`) or ``fallback``
+        (``primekg:<x_index>``, used for every node whose CURIE is shared with
+        another node; PrimeKG has a few, mostly one gene under an old and a new
+        symbol).
 
     Raises:
-        ValueError: if the final IDs are not unique (can't happen unless a source
-            is literally named ``primekg``).
+        ValueError: from :func:`curie` or :func:`slugify` for a node no rule covers,
+            or if the final IDs are not unique.
     """
-    preferred: dict[str, tuple[str, str]] = {}
-    for index, x_id, source, name in nodes:
-        if source == GROUPED_SOURCE:
-            member = grouped_member(name, x_id.split("_"), member_names)
-            preferred[index] = (f"{GROUPED_SOURCE}:{member}", "grouped")
-        else:
-            preferred[index] = (f"{source}:{x_id}", "source")
-    counts = Counter(eid for eid, _ in preferred.values())
-    out = {
-        index: (eid, scheme) if counts[eid] == 1 else (f"{FALLBACK_PREFIX}:{index}", "fallback")
-        for index, (eid, scheme) in preferred.items()
-    }
+    nodes = list(nodes)
+    groups = group_ids((i, x, n) for i, x, s, n in nodes if s == GROUPED_SOURCE)
+    preferred = {i: curie(s, x) for i, x, s, _n in nodes if s != GROUPED_SOURCE}
+    counts = Counter(preferred.values())
+    out = {i: (eid, "group") for i, (eid, _k) in groups.items()}
+    for index, eid in preferred.items():
+        out[index] = (eid, "curie") if counts[eid] == 1 else (f"{FALLBACK_PREFIX}:{index}", "fallback")
     final = Counter(eid for eid, _ in out.values())
     dupes = [eid for eid, n in final.items() if n > 1]
     if dupes:
@@ -586,7 +672,8 @@ def _subgraph(con, config: BuildConfig) -> dict[str, Any]:
 
 
 def _read_member_names(grouped_csv: Path) -> dict[str, str]:
-    """MONDO number → name, from ``kg_grouped_diseases.csv`` (small; plain csv)."""
+    """MONDO number → name, from ``kg_grouped_diseases.csv`` (small; plain csv). Used
+    to name each grouped node's members in the entity provenance file."""
     with grouped_csv.open(encoding="utf-8", newline="") as f:
         return {row["node_id"]: row["node_name"] for row in csv.DictReader(f)}
 
@@ -630,7 +717,9 @@ def build_store(
     # Entity IDs over the whole graph, so a node's ID doesn't depend on the seed.
     member_names = _read_member_names(raw_dir / GROUPED_CSV)
     all_nodes = con.execute("SELECT idx, xid, src, typ, nm FROM nodes").fetchall()
-    ids = entity_ids(((i, x, s, n) for i, x, s, _t, n in all_nodes), member_names)
+    ids = entity_ids((i, x, s, n) for i, x, s, _t, n in all_nodes)
+    group_suffixed = sum(1 for _eid, k in group_ids(
+        (i, x, n) for i, x, s, _t, n in all_nodes if s == GROUPED_SOURCE).values() if k)
     attrs = {i: (x, s, t, n) for i, x, s, t, n in all_nodes}
     types = {i: t for i, (_x, _s, t, _n) in attrs.items()}
     id_of = {i: eid for i, (eid, _scheme) in ids.items()}
@@ -672,7 +761,8 @@ def build_store(
         rec: dict[str, Any] = {"id": id_of[i], "primekg_index": i, "x_source": src, "x_id": x_id,
                                "id_scheme": ids[i][1]}
         if src == GROUPED_SOURCE:
-            rec["members"] = x_id.split("_")
+            rec["members"] = [{"id": c, "name": member_names.get(n)}
+                              for n, c in zip(x_id.split("_"), group_members(x_id), strict=True)]
         entity_sources.append(rec)
 
     # Write: data files first, build.json last.
@@ -719,6 +809,7 @@ def build_store(
             "edges_by_relation": dict(sorted(by_rel.items())),
             "entity_id_schemes_graph": dict(sorted(schemes_graph.items())),
             "entity_id_schemes_store": dict(sorted(schemes_store.items())),
+            "group_ids_suffixed_graph": group_suffixed,
         },
         "checks": {
             **{k: v for k, v in canon.items() if k != "canonical_edges"},

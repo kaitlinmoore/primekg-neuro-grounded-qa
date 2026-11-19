@@ -3,15 +3,18 @@ loader (``tools.store``), against a tiny synthetic PrimeKG release.
 
 Fixture: ``tests/fixtures/data/primekg_raw/`` holds a 34-row ``kg.csv`` in PrimeKG's
 column layout: 17 facts, each written x→y and then, after all originals, y→x, as
-PrimeKG does. Its nodes (``x_index``: name, ``<source>:<id>``):
+PrimeKG does. Its nodes (``x_index``: name, raw ``<source> <id>`` → store ID):
 
-- 0 APP ``NCBI:351``; 1 TRNP and 2 MT-TP, which share ``NCBI:4571`` (a collision)
-- 3 Alzheimer disease, grouped ``4975_11913`` (member 4975 has the node's name)
-- 4 familial Alzheimer disease ``MONDO:100087``; 5 dementia ``MONDO:4847``
-- 6 Donepezil ``DrugBank:DB00843``; 7 Memory impairment ``HPO:2354``; 13 All ``HPO:1``
-- 8 brain ``UBERON:955``; 9 cerebral cortex ``UBERON:956``
-- 10 lonely group, grouped ``9_7`` (no member has the node's name)
-- 11 lead ``CTD:D007854``; 12 metals ``CTD:D008670``
+- 0 APP ``NCBI 351`` → ``NCBIGene:351``; 1 TRNP and 2 MT-TP, which share
+  ``NCBI 4571`` (a collision) → ``primekg:1``, ``primekg:2``
+- 3 Alzheimer disease, grouped ``4975_11913`` → ``group:alzheimer_disease``
+- 4 familial Alzheimer disease ``MONDO 100087`` → ``MONDO:0100087``; 5 dementia
+  ``MONDO 4847`` → ``MONDO:0004847``
+- 6 Donepezil ``DrugBank DB00843``; 7 Memory impairment ``HPO 2354`` →
+  ``HP:0002354``; 13 All ``HPO 1`` → ``HP:0000001``
+- 8 brain ``UBERON 955`` → ``UBERON:0000955``; 9 cerebral cortex ``UBERON:0000956``
+- 10 lonely group, grouped ``9_7`` → ``group:lonely_group``
+- 11 lead ``CTD D007854`` → ``MESH:D007854``; 12 metals ``MESH:D008670``
 
 Hierarchy facts (first row in file order): ``disease_disease`` 5→3 and 3→4
 (parent→child), ``phenotype_phenotype`` 13→7 (parent→child), ``anatomy_anatomy``
@@ -97,18 +100,18 @@ def test_each_edge_records_both_raw_rows(full):
 
 def test_parent_child_file_order_becomes_child_to_parent(full):
     _out, _meta, edges = full
-    e = _edge(edges, "disease_disease", "MONDO:4847", "MONDO_grouped:4975")
-    assert (e["subject"], e["object"], e["directed"]) == ("MONDO_grouped:4975", "MONDO:4847", True)
-    e = _edge(edges, "disease_disease", "MONDO_grouped:4975", "MONDO:100087")
-    assert (e["subject"], e["object"], e["directed"]) == ("MONDO:100087", "MONDO_grouped:4975", True)
-    e = _edge(edges, "phenotype_phenotype", "HPO:1", "HPO:2354")
-    assert (e["subject"], e["object"], e["directed"]) == ("HPO:2354", "HPO:1", True)
+    e = _edge(edges, "disease_disease", "MONDO:0004847", "group:alzheimer_disease")
+    assert (e["subject"], e["object"], e["directed"]) == ("group:alzheimer_disease", "MONDO:0004847", True)
+    e = _edge(edges, "disease_disease", "group:alzheimer_disease", "MONDO:0100087")
+    assert (e["subject"], e["object"], e["directed"]) == ("MONDO:0100087", "group:alzheimer_disease", True)
+    e = _edge(edges, "phenotype_phenotype", "HP:0000001", "HP:0002354")
+    assert (e["subject"], e["object"], e["directed"]) == ("HP:0002354", "HP:0000001", True)
 
 
 def test_anatomy_file_order_is_child_first(full):
     _out, _meta, edges = full
-    e = _edge(edges, "anatomy_anatomy", "UBERON:955", "UBERON:956")
-    assert (e["subject"], e["object"], e["directed"]) == ("UBERON:956", "UBERON:955", True)
+    e = _edge(edges, "anatomy_anatomy", "UBERON:0000955", "UBERON:0000956")
+    assert (e["subject"], e["object"], e["directed"]) == ("UBERON:0000956", "UBERON:0000955", True)
 
 
 def test_orient_follows_first_row_for_each_convention():
@@ -122,9 +125,9 @@ def test_orient_follows_first_row_for_each_convention():
 
 def test_exposure_exposure_stays_undirected(full):
     _out, _meta, edges = full
-    e = _edge(edges, "exposure_exposure", "CTD:D007854", "CTD:D008670")
+    e = _edge(edges, "exposure_exposure", "MESH:D007854", "MESH:D008670")
     assert e["directed"] is False
-    assert e["subject"] == "CTD:D007854"  # smaller ID first
+    assert e["subject"] == "MESH:D007854"  # smaller ID first
 
 
 def test_only_hierarchy_relations_are_directed(full):
@@ -136,9 +139,9 @@ def test_only_hierarchy_relations_are_directed(full):
 def test_other_relations_put_the_named_type_first(full):
     _out, _meta, edges = full
     # kg.csv's first row is APP -> brain; the relation name puts anatomy first.
-    e = _edge(edges, "anatomy_protein_present", "NCBI:351", "UBERON:955")
-    assert (e["subject"], e["object"]) == ("UBERON:955", "NCBI:351")
-    e = _edge(edges, "indication", "DrugBank:DB00843", "MONDO_grouped:4975")
+    e = _edge(edges, "anatomy_protein_present", "NCBIGene:351", "UBERON:0000955")
+    assert (e["subject"], e["object"]) == ("UBERON:0000955", "NCBIGene:351")
+    e = _edge(edges, "indication", "DrugBank:DB00843", "group:alzheimer_disease")
     assert e["subject"] == "DrugBank:DB00843"
 
 
@@ -156,32 +159,121 @@ def test_orient_rejects_unknown_relation_and_bad_types():
 def test_entity_id_scheme(full):
     out, meta, _edges = full
     ents = {e["id"]: e for e in sf.read_jsonl(out / sf.ENTITIES)}
-    assert ents["NCBI:351"]["name"] == "APP"
-    assert ents["MONDO_grouped:4975"]["name"] == "Alzheimer disease"  # member named like the node
-    assert ents["MONDO_grouped:7"]["name"] == "lonely group"  # no name match: smallest member
-    assert ents["primekg:1"]["name"] == "TRNP"  # NCBI:4571 is shared, so both fall back
+    assert ents["NCBIGene:351"]["name"] == "APP"
+    assert ents["group:alzheimer_disease"]["name"] == "Alzheimer disease"
+    assert ents["group:lonely_group"]["name"] == "lonely group"
+    assert ents["primekg:1"]["name"] == "TRNP"  # NCBIGene:4571 is shared, so both fall back
     assert ents["primekg:2"]["name"] == "MT-TP"
-    assert "NCBI:4571" not in ents
-    assert meta["counts"]["entity_id_schemes_graph"] == {"fallback": 2, "grouped": 2, "source": 10}
+    assert ents["MESH:D007854"]["source"] == "CTD"  # Entity.source stays PrimeKG's x_source
+    assert "NCBIGene:4571" not in ents
+    assert meta["counts"]["entity_id_schemes_graph"] == {"curie": 10, "fallback": 2, "group": 2}
+    assert meta["counts"]["group_ids_suffixed_graph"] == 0
     srcs = {e["id"]: e for e in sf.read_jsonl(out / sf.ENTITY_SOURCES)}
-    assert srcs["MONDO_grouped:4975"]["members"] == ["4975", "11913"]
+    assert srcs["group:alzheimer_disease"]["members"] == [
+        {"id": "MONDO:0004975", "name": "Alzheimer disease"},
+        {"id": "MONDO:0011913", "name": "Alzheimer disease 3"},
+    ]
     assert srcs["primekg:1"] == {"id": "primekg:1", "primekg_index": "1", "x_source": "NCBI",
                                  "x_id": "4571", "id_scheme": "fallback"}
 
 
-def test_grouped_member_choice():
-    names = {"10": "B thing", "2": "a thing", "30": "other"}
-    assert build.grouped_member("A Thing", ["10", "2", "30"], names) == "2"
-    assert build.grouped_member("no match", ["10", "2", "30"], names) == "2"
-    assert build.grouped_member("no match", ["10", "30"], names) == "10"
+@pytest.mark.parametrize(("source", "x_id", "expected"), [
+    ("MONDO", "4975", "MONDO:0004975"),
+    ("MONDO", "100087", "MONDO:0100087"),
+    ("HPO", "2354", "HP:0002354"),
+    ("GO", "98793", "GO:0098793"),
+    ("UBERON", "955", "UBERON:0000955"),
+    ("UBERON", "1234567", "UBERON:1234567"),
+    ("NCBI", "351", "NCBIGene:351"),
+    ("DrugBank", "DB00843", "DrugBank:DB00843"),
+    ("REACTOME", "R-HSA-109582", "REACT:R-HSA-109582"),
+    ("CTD", "D007854", "MESH:D007854"),
+    ("CTD", "C041507", "MESH:C041507"),
+])
+def test_curie_for_each_source(source, x_id, expected):
+    assert build.curie(source, x_id) == expected
+
+
+def test_every_source_has_a_prefix_rule():
+    assert set(build.SOURCE_PREFIXES) == {
+        "CTD", "DrugBank", "GO", "HPO", "MONDO", "NCBI", "REACTOME", "UBERON"}
+    assert build.RULES["entity_id"]["prefixes"] is build.SOURCE_PREFIXES
+
+
+@pytest.mark.parametrize(("source", "x_id"), [
+    ("MONDO", "12345678"),  # too long to pad to 7
+    ("MONDO", "MONDO:4975"),  # already prefixed
+    ("HPO", "HP_2354"),
+    ("DrugBank", "DB843"),
+    ("REACTOME", "R-MMU-1"),
+    ("CTD", "4975"),
+    ("Mystery", "1"),
+    ("MONDO_grouped", "4975_11913"),
+])
+def test_curie_rejects_unexpected_ids(source, x_id):
+    with pytest.raises(ValueError):
+        build.curie(source, x_id)
+
+
+@pytest.mark.parametrize(("name", "slug"), [
+    ("Alzheimer disease", "alzheimer_disease"),
+    ("Parkinson disease, autosomal dominant", "parkinson_disease_autosomal_dominant"),
+    ("  Lewy-body  (DLB) dementia!! ", "lewy_body_dlb_dementia"),
+    ("frontotemporal dementia and/or amyotrophic lateral sclerosis",
+     "frontotemporal_dementia_and_or_amyotrophic_lateral_sclerosis"),
+    ("Type 2 diabetes", "type_2_diabetes"),
+    ("Sjögren syndrome", "sj_gren_syndrome"),
+])
+def test_slugify(name, slug):
+    assert build.slugify(name) == slug
+
+
+def test_slugify_rejects_empty():
+    with pytest.raises(ValueError, match="no letters or digits"):
+        build.slugify(" -- ")
+
+
+def test_group_slug_collisions_get_suffixes_in_member_order():
+    groups = [
+        ("50", "300_20", "Foo disease"),  # smallest member 20: third
+        ("40", "10_400", "foo-disease"),  # smallest member 10: second
+        ("60", "20_5", "FOO DISEASE"),  # smallest member 5: first, keeps the bare slug
+        ("70", "1_2", "foo disease 2"),  # its own slug is foo_disease_2, so suffixes skip _2
+        ("80", "90", "Bar"),
+    ]
+    ids = build.group_ids(groups)
+    assert ids == {
+        "60": ("group:foo_disease", 0),
+        "40": ("group:foo_disease_3", 3),
+        "50": ("group:foo_disease_4", 4),
+        "70": ("group:foo_disease_2", 0),
+        "80": ("group:bar", 0),
+    }
+    # Input order doesn't matter.
+    assert build.group_ids(list(reversed(groups))) == ids
+
+
+def test_group_slug_ties_on_members_break_by_index():
+    ids = build.group_ids([("9", "1_2", "X"), ("10", "1_3", "x")])
+    assert ids == {"9": ("group:x", 0), "10": ("group:x_2", 2)}
+
+
+def test_group_members_are_mondo_curies():
+    assert build.group_members("4975_11913") == ["MONDO:0004975", "MONDO:0011913"]
 
 
 def test_entity_ids_fall_back_only_for_collisions():
     nodes = [("0", "1", "NCBI", "a"), ("1", "1", "NCBI", "b"), ("2", "1", "HPO", "c"),
-             ("3", "5_6", "MONDO_grouped", "g")]
-    ids = build.entity_ids(nodes, {"6": "g"})
+             ("3", "5_6", "MONDO_grouped", "G g"), ("4", "1", "MONDO", "d")]
+    ids = build.entity_ids(nodes)
     assert ids == {"0": ("primekg:0", "fallback"), "1": ("primekg:1", "fallback"),
-                   "2": ("HPO:1", "source"), "3": ("MONDO_grouped:6", "grouped")}
+                   "2": ("HP:0000001", "curie"), "3": ("group:g_g", "group"),
+                   "4": ("MONDO:0000001", "curie")}
+
+
+def test_entity_ids_fail_on_an_unknown_source():
+    with pytest.raises(ValueError, match="no CURIE rule"):
+        build.entity_ids([("0", "1", "Mystery", "a")])
 
 
 # -- relation labels -------------------------------------------------------------
@@ -189,8 +281,8 @@ def test_entity_ids_fall_back_only_for_collisions():
 
 def test_drug_protein_is_qualified_and_others_are_not(full):
     _out, meta, edges = full
-    t = _edge(edges, "drug_protein/target", "DrugBank:DB00843", "NCBI:351")
-    z = _edge(edges, "drug_protein/enzyme", "DrugBank:DB00843", "NCBI:351")
+    t = _edge(edges, "drug_protein/target", "DrugBank:DB00843", "NCBIGene:351")
+    z = _edge(edges, "drug_protein/enzyme", "DrugBank:DB00843", "NCBIGene:351")
     assert (t["display_relation"], z["display_relation"]) == ("target", "enzyme")
     assert {e["relation"] for e in edges if "/" in e["relation"]} == {
         "drug_protein/target", "drug_protein/enzyme"}
@@ -218,7 +310,7 @@ def test_pruned_subgraph_matches_hand_count(tmp_path):
     assert meta["counts"]["edges"] == 10
     assert meta["counts"]["nodes"] == 8
     ents = {e["id"] for e in sf.read_jsonl(out / sf.ENTITIES)}
-    assert "UBERON:955" not in ents  # only reachable through APP, which is over the cap
+    assert "UBERON:0000955" not in ents  # only reachable through APP, which is over the cap
 
 
 @pytest.mark.parametrize("config", [PRUNED, FULL, BuildConfig(seeds=(AD,), subgraph="a")])
@@ -307,6 +399,17 @@ def test_build_id_depends_on_inputs():
     assert basis["rules"] == build.RULES and basis["builder_version"] == build.BUILDER_VERSION
 
 
+def test_build_id_depends_on_the_id_rules(monkeypatch):
+    raw = {"kg.csv": "a" * 64, "kg_grouped_diseases.csv": "b" * 64}
+    base = build.compute_build_id(raw, PRUNED)[0]
+    monkeypatch.setitem(build.SOURCE_PREFIXES, "NCBI", {"prefix": "NCBI", "pattern": "[0-9]+"})
+    assert build.curie("NCBI", "351") == "NCBI:351"
+    changed = build.compute_build_id(raw, PRUNED)[0]
+    assert changed != base
+    monkeypatch.setitem(build.RULES["entity_id"], "grouped", "something else")
+    assert build.compute_build_id(raw, PRUNED)[0] not in (base, changed)
+
+
 def test_named_seed_sets():
     neuro = {s.index for s in build.SEED_SETS["neuro"]}
     assert len(neuro) == len(build.SEED_SETS["neuro"]) == 28
@@ -324,11 +427,11 @@ def test_store_round_trips_through_load_store(full):
     assert isinstance(store, InMemoryEvidenceStore)
     assert isinstance(store, EvidenceStore)
     assert len(store) == 17
-    e = store.get(_edge(edges, "anatomy_anatomy", "UBERON:955", "UBERON:956")["id"])
+    e = store.get(_edge(edges, "anatomy_anatomy", "UBERON:0000955", "UBERON:0000956")["id"])
     assert isinstance(e, EdgeEvidence)
     assert (e.subject.name, e.object.name, e.directed) == ("cerebral cortex", "brain", True)
     assert store.entity("primekg:2").name == "MT-TP"
-    assert [x.id for x in store.search_entities("alzheimer", 5)] == ["MONDO_grouped:4975", "MONDO:100087"]
+    assert [x.id for x in store.search_entities("alzheimer", 5)] == ["group:alzheimer_disease", "MONDO:0100087"]
     assert "drug_protein/target" in store.relations()
 
 
@@ -368,3 +471,29 @@ def test_loading_a_store_needs_no_duckdb(full):
         "assert len(s) == 17\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# -- the independent cross-check (scripts/data/check_store.py) -----------------------
+
+
+def test_cross_check_passes_on_the_fixture_and_catches_a_bad_id(full):
+    """check_store re-derives every ID with its own prefix table and slug rule."""
+    import copy
+
+    import check_store
+
+    out, _meta, _edges = full
+    s = check_store.load_store_files(out)
+    rows = {rn for x in s["edge_sources"] for rn in x["kg_csv_rows"]}
+    nodes = {x["primekg_index"] for x in s["entity_sources"]}
+    kg = check_store.scan_kg(RAW / build.KG_CSV, rows, nodes)
+    assert check_store.check_raw(s, kg)["failures"] == {}
+
+    bad = copy.deepcopy(s)
+    i = next(k for k, e in enumerate(bad["entities"]) if e["id"] == "MONDO:0004847")
+    bad["entities"][i]["id"] = "MONDO:4847"  # unpadded
+    j = next(k for k, e in enumerate(bad["entity_sources"]) if e["id_scheme"] == "group")
+    bad["entity_sources"][j]["members"] = bad["entity_sources"][j]["members"][:1]
+    failures = check_store.check_raw(bad, kg)["failures"]
+    assert "entity_id_scheme_curie_wrong" in failures
+    assert "entity_id_scheme_group_wrong" in failures

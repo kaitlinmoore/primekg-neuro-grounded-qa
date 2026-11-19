@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     STORE is None or not sf.is_store_dir(STORE), reason="real evidence store not built"
 )
 
-AD = "MONDO_grouped:4975"  # PrimeKG's grouped "Alzheimer disease" node
+AD = "group:alzheimer_disease"  # PrimeKG's grouped "Alzheimer disease" node
 
 
 @pytest.fixture(scope="module")

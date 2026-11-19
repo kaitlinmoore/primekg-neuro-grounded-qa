@@ -7,9 +7,11 @@ three ways:
 1. **Raw trace.** Every store edge is a raw ``kg.csv`` fact in one direction or the
    other, with the same relation and display relation; the two raw row numbers the
    store records hold exactly that fact and its reverse; no fact appears twice.
-   Every entity's name, type and source match its raw node, its ID follows the
-   scheme, and an ID scheme of ``source`` really is unique over the whole graph
-   (``fallback`` really is shared).
+   Every entity's name, type and source match its raw node; its ID is re-derived
+   here from the raw ``x_source``/``x_id`` with this script's own table of standard
+   prefixes (``curie``), name slug (``group``) or ``primekg:<x_index>``
+   (``fallback``); a ``curie`` ID really is unique over the whole graph and a
+   ``fallback`` really is shared; grouped nodes list their members.
 2. **Direction.** Every hierarchy edge is ``directed`` and its subject is the child
    by the file-order rule, re-derived here from the raw rows; every other edge is
    undirected. As a second, independent reading, directed ``disease_disease`` and
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -43,6 +46,34 @@ from paths import derived_dir, raw_dir  # noqa: E402
 
 from neuro_grounded_qa.data import build  # noqa: E402
 from neuro_grounded_qa.data import store_files as sf  # noqa: E402
+
+
+# Independent of build.SOURCE_PREFIXES on purpose: PrimeKG x_source -> (standard
+# prefix, zero-padded width or None).
+EXPECTED_PREFIX = {
+    "CTD": ("MESH", None), "DrugBank": ("DrugBank", None), "GO": ("GO", 7), "HPO": ("HP", 7),
+    "MONDO": ("MONDO", 7), "NCBI": ("NCBIGene", None), "REACTOME": ("REACT", None),
+    "UBERON": ("UBERON", 7),
+}
+
+
+def curie_ok(eid: str, source: str, x_id: str) -> bool:
+    """Whether ``eid`` is the standard CURIE for a raw (x_source, x_id)."""
+    if source not in EXPECTED_PREFIX or ":" not in eid:
+        return False
+    prefix, width = EXPECTED_PREFIX[source]
+    got_prefix, local = eid.split(":", 1)
+    if got_prefix != prefix:
+        return False
+    if width is None:
+        return local == x_id
+    return len(local) == width and local.isdigit() and x_id.isdigit() and int(local) == int(x_id)
+
+
+def group_ok(eid: str, name: str) -> bool:
+    """Whether ``eid`` is ``group:<slug of name>``, optionally with a ``_<n>`` suffix."""
+    slug = "_".join(w for w in re.split(r"[^a-z0-9]", name.lower()) if w)
+    return eid == f"group:{slug}" or re.fullmatch(rf"group:{re.escape(slug)}_[0-9]+", eid) is not None
 
 
 def load_store_files(store: Path) -> dict:
@@ -132,14 +163,17 @@ def check_raw(s: dict, kg: dict) -> dict:
         x_id, src_name = a[0], a[3]
         scheme = src["id_scheme"]
         key_owners = kg["keys"][f"{src_name}:{x_id}"]
-        if scheme == "source":
-            ok = ent["id"] == f"{src_name}:{x_id}" and len(key_owners) == 1
-        elif scheme == "grouped":
-            ok = (src_name == build.GROUPED_SOURCE and ent["id"].startswith(build.GROUPED_SOURCE + ":")
-                  and ent["id"].split(":", 1)[1] in x_id.split("_"))
+        if scheme == "curie":
+            ok = curie_ok(ent["id"], src_name, x_id) and len(key_owners) == 1
+        elif scheme == "group":
+            members = [m["id"] for m in src.get("members", [])]
+            ok = (src_name == "MONDO_grouped" and group_ok(ent["id"], a[2])
+                  and len(members) == len(x_id.split("_"))
+                  and all(curie_ok(m, "MONDO", n) for m, n in zip(members, x_id.split("_"), strict=True)))
+        elif scheme == "fallback":
+            ok = ent["id"] == f"primekg:{src['primekg_index']}" and len(key_owners) > 1
         else:
-            ok = ent["id"] == f"{build.FALLBACK_PREFIX}:{src['primekg_index']}" and (
-                len(key_owners) > 1 or src_name == build.GROUPED_SOURCE)
+            ok = False
         if not ok:
             fails[f"entity_id_scheme_{scheme}_wrong"].append(ent["id"])
         if ent["id"] not in in_edges and ent["id"] not in seeds:
@@ -172,7 +206,7 @@ def check_optimuskg(s: dict) -> dict:
     if not db.exists():
         return {"skipped": f"{db} not found"}
     curie = {"disease_disease": ("MONDO", "MONDO_{:07d}", "DIS-DIS/PARENT"),
-             "phenotype_phenotype": ("HPO", "HP_{:07d}", "PHE-PHE/PARENT")}
+             "phenotype_phenotype": ("HP", "HP_{:07d}", "PHE-PHE/PARENT")}
     con = duckdb.connect(str(db), read_only=True)
     out = {}
     for rel, (src, fmt, orel) in curie.items():
