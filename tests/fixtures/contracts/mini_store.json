@@ -1,0 +1,30 @@
+{
+  "_comment": "Synthetic evidence store for contract tests. Every name, ID and relation label is invented; nothing comes from PrimeKG or any real graph. Edges reference entities by ID.",
+  "build_id": "fixture-mini-store-v1",
+  "entities": [
+    {"id": "GENE_A", "name": "Gene Alpha", "type": "gene", "source": "SYNTH"},
+    {"id": "GENE_B", "name": "Gene Beta", "type": "gene", "source": "SYNTH"},
+    {"id": "GENE_C", "name": "Gene Gamma", "type": "gene", "source": "SYNTH"},
+    {"id": "GENE_D", "name": "Gene Delta", "type": "gene", "source": "SYNTH"},
+    {"id": "DIS_1", "name": "Disease One", "type": "disease", "source": "SYNTH"},
+    {"id": "DIS_2", "name": "Disease Two", "type": "disease", "source": "SYNTH"},
+    {"id": "DRUG_X", "name": "Drug X", "type": "drug", "source": "SYNTH"},
+    {"id": "DRUG_Y", "name": "Drug Y", "type": "drug", "source": "SYNTH"},
+    {"id": "PATH_P", "name": "Pathway P", "type": "pathway", "source": "SYNTH"},
+    {"id": "PHEN_Q", "name": "Phenotype Q", "type": "phenotype", "source": null}
+  ],
+  "edges": [
+    {"id": "E:000001", "subject": "GENE_A", "relation": "associated_with", "display_relation": "associated with", "object": "DIS_1"},
+    {"id": "E:000002", "subject": "GENE_B", "relation": "associated_with", "display_relation": "associated with", "object": "DIS_1"},
+    {"id": "E:000003", "subject": "DRUG_X", "relation": "targets", "display_relation": "targets", "object": "GENE_A"},
+    {"id": "E:000004", "subject": "DRUG_X", "relation": "indicated_for", "display_relation": "indication", "object": "DIS_1"},
+    {"id": "E:000005", "subject": "DRUG_Y", "relation": "targets", "display_relation": "targets", "object": "GENE_B"},
+    {"id": "E:000006", "subject": "DRUG_Y", "relation": "contraindicated_for", "display_relation": "contraindication", "object": "DIS_2"},
+    {"id": "E:000007", "subject": "GENE_A", "relation": "member_of", "display_relation": "member of", "object": "PATH_P"},
+    {"id": "E:000008", "subject": "GENE_C", "relation": "member_of", "display_relation": "member of", "object": "PATH_P"},
+    {"id": "E:000009", "subject": "GENE_C", "relation": "associated_with", "display_relation": "associated with", "object": "DIS_2"},
+    {"id": "E:000010", "subject": "DIS_1", "relation": "has_phenotype", "display_relation": null, "object": "PHEN_Q"},
+    {"id": "E:000011", "subject": "GENE_A", "relation": "interacts_with", "display_relation": "interacts with", "object": "GENE_C"},
+    {"id": "E:000012", "subject": "DIS_2", "relation": "has_phenotype", "display_relation": null, "object": "PHEN_Q"}
+  ]
+}

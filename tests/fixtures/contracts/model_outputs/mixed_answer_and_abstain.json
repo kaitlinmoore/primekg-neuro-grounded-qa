@@ -1,0 +1,6 @@
+{
+  "description": "Answers and abstains in one object.",
+  "text": "{\n  \"claims\": [\n    {\n      \"subject_id\": \"GENE_A\",\n      \"relation\": \"associated_with\",\n      \"object_id\": \"DIS_1\",\n      \"subject_name\": \"Gene Alpha\",\n      \"object_name\": \"Disease One\",\n      \"cites\": [\n        \"E:000001\"\n      ]\n    },\n    {\n      \"subject_id\": \"GENE_B\",\n      \"relation\": \"associated_with\",\n      \"object_id\": \"DIS_1\",\n      \"cites\": [\n        \"E:000002\"\n      ]\n    }\n  ],\n  \"answer_text\": \"Gene Alpha and Gene Beta are associated with Disease One.\",\n  \"abstain\": true,\n  \"reason\": \"hedging\"\n}",
+  "expected_type": "ParseFailure",
+  "expected_reason": "mixed_answer_and_abstain"
+}
