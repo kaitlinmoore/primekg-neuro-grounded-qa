@@ -23,6 +23,12 @@ dev = [
     "pytest",
     "ipykernel",
 ]
+# Graph download and measurement (scripts/data/, tests/data/). duckdb reads
+# PrimeKG's CSV and OptimusKG's parquet files directly and runs the joins and
+# anti-joins in SQL; install with `uv sync --group data`.
+data = [
+    "duckdb>=1.1",
+]
 
 [tool.uv]
 # The uv cache lives in the WSL filesystem and this checkout's .venv lives on
