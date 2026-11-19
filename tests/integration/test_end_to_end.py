@@ -227,7 +227,7 @@ def test_fabricated_citations_are_stripped_and_penalized(run):
     assert m["retrieved_evidence"] == 2.0
     assert m["stripped_cites"] == 2.0  # E:999999 (fabricated), E:000003 (never retrieved)
     assert m["voided_claims"] == 1.0  # the GENE_B claim, despite its valid E:000002
-    assert (m["supported_claims"], m["unsupported_claims"]) == (1.0, 2.0)
+    assert (m["supported_facts"], m["unsupported_facts"]) == (1.0, 2.0)
     assert m["coverage"] == 0.5
     assert m["unsupported_penalty"] == pytest.approx(0.5 * 2 / 3)
     assert reward(trace) == pytest.approx(0.5 - 0.5 * 2 / 3)

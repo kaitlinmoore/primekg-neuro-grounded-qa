@@ -45,10 +45,11 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
     - ``claims``: claims per answer as written, duplicates included (0 for an
       abstention or parse failure).
     - ``citations_per_claim``: mean distinct cites per claim (when there are claims).
-    - ``supported_claims``, ``unsupported_claims``: |S| and |U|, counted in distinct
+    - ``supported_facts``, ``unsupported_facts``: |S| and |U|, counted in distinct
       facts after deduplication.
     - ``duplicate_claims``: claims removed by deduplication (claims stating the same
-      fact as an earlier claim, in either order).
+      fact as an earlier claim; reversed restatements count unless the relation is
+      directed).
     - ``voided_claims``: claims a valid cite states but a stripped cite made
       unsupported (strict citations).
     - ``stripped_cites``: cites to IDs that weren't retrieved.
@@ -78,8 +79,8 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
         out["premise_asserted"] = float(b.premise_asserted)
 
     out["claims"] = float(b.n_claims)
-    out["supported_claims"] = float(b.n_supported)
-    out["unsupported_claims"] = float(b.n_unsupported)
+    out["supported_facts"] = float(b.n_supported)
+    out["unsupported_facts"] = float(b.n_unsupported)
     if b.n_claims:
         out["citations_per_claim"] = (
             sum(len(c.valid_cites) + len(c.stripped_cites) for c in b.claims) / b.n_claims
