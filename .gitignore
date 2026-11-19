@@ -1,7 +1,12 @@
-# Local-only project folders
+# Local-only project folders (anchored to the repo root, so that same-named
+# folders inside the package, e.g. src/neuro_grounded_qa/data/, stay tracked)
 handoffs/
-learning/
-data/
+/learning/
+/data/
+
+# Run outputs from vf-run / vf-validate. Traces can contain question items,
+# including held-out ones.
+outputs/
 
 # Secrets
 .env
@@ -11,7 +16,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-build/
+/build/
 dist/
 .pytest_cache/
 .ruff_cache/
