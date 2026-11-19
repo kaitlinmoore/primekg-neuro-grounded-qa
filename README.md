@@ -22,6 +22,8 @@ uv sync                         # Python 3.11 venv: environment package (editabl
 cp .env.example .env            # then fill in the keys you need
 ```
 
+On WSL with the checkout under `/mnt/c`, [direnv](https://direnv.net/) is optional but recommended: the committed `.envrc` puts the venv on the WSL filesystem, which makes imports and tests much faster. Run `direnv allow` once in the repo before `uv sync`.
+
 ## How to run
 
 ```bash

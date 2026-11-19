@@ -23,7 +23,8 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 
 ## Environment
 - WSL2 (Ubuntu), working on the Windows checkout through `/mnt/c/dev/GitHub/primekg-neuro-grounded-qa`. Reason: verifiers 0.4.1 doesn't import on native Windows (`fcntl`, `os.killpg`).
-- This deviates from the standard's WSL-filesystem rule on purpose, for one checkout shared with Windows tools. Tradeoff: slower file I/O for uv and git. `[tool.uv] link-mode = "copy"` in the root `pyproject.toml` handles the cache and venv being on different filesystems.
+- This deviates from the standard's WSL-filesystem rule on purpose, for one checkout shared with Windows tools. Tradeoff: slower file I/O for git and for anything that reads the code from `/mnt/c`; the venv is kept off `/mnt/c` (next bullet) to avoid the worst of it. When the venv is on `/mnt/c` (no direnv), `[tool.uv] link-mode = "copy"` in the root `pyproject.toml` handles the uv cache and the venv being on different filesystems.
+- The venv lives on the WSL filesystem at `$UV_PROJECT_ENVIRONMENT` (`~/.venvs/ngq-<checkout folder name>`), set by the committed `.envrc` through direnv. Each checkout or worktree needs `direnv allow` once. Without direnv, uv falls back to a `.venv` on `/mnt/c`, which is slow. Reason: `uv run pytest -q` took 1m18.6s with the `.venv` on `/mnt/c` and 5.4s with the venv on the WSL filesystem.
 - Run uv, pytest and vf-* only from WSL. The `.venv` is a Linux venv (`.venv/bin/`); don't run uv on this checkout from Windows.
 - Shell commands in this repo are plain bash run in WSL.
 - uv; Python 3.11; `verifiers==0.4.1`, imported as `import verifiers.v1 as vf`; `prime==0.22.0` through `uv tool install` (not a project dependency).
