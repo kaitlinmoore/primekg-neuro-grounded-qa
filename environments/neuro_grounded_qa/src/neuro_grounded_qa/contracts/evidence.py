@@ -103,14 +103,23 @@ class Entity(BaseModel):
 
 
 class EdgeEvidence(BaseModel):
-    """One graph edge as an evidence unit: an undirected fact ``subject -relation- object``.
+    """One graph edge as an evidence unit: a fact ``subject -relation- object``.
 
-    **Undirected.** Which end is ``subject`` and which is ``object`` is arbitrary but
-    stable: the store keeps one row per edge, so each fact has exactly one ID. Claims
-    may state the fact in either order; ``contracts.facts.same_fact`` and
-    ``supports`` compare without direction. PrimeKG ships many edges twice, once per
-    orientation; the data lane's store builder deduplicates those reversed rows into
-    one edge.
+    **Undirected by default.** Which end is ``subject`` and which is ``object`` is
+    arbitrary but stable: the store keeps one row per edge, so each fact has exactly
+    one ID. Claims may state the fact in either order; ``contracts.facts.same_fact``
+    and ``supports`` compare without direction. PrimeKG ships many edges twice, once
+    per orientation; the data lane's store builder deduplicates those reversed rows
+    into one edge.
+
+    **``directed``.** When True, subject → object order is meaningful under the
+    relation's documented convention, and a claim matches only in that order. This is
+    for relations where the reversed reading is a different, usually false, fact,
+    such as same-type hierarchies ("A is a subtype of B"). The data lane sets the flag
+    when it builds the store and normalizes each directed relation to one convention;
+    for hierarchies the planned convention is subject = child (narrower term),
+    object = parent (broader term). The contracts encode no relation names: which
+    relations are directed is the data's choice, carried per edge.
 
     ``relation`` is the graph's relation label, copied verbatim; claims must copy it
     exactly, which is what makes the support check exact equality.
@@ -131,6 +140,8 @@ class EdgeEvidence(BaseModel):
     relation: str = Field(min_length=1)
     display_relation: str | None = None
     object: Entity
+    directed: bool = False
+    """True if subject → object order is meaningful (see the class docstring)."""
 
     @field_validator("id")
     @classmethod
@@ -256,8 +267,9 @@ class InMemoryEvidenceStore:
         """Build a store from a normalized dict, the format of the fixture file.
 
         ``data`` has ``entities`` (a list of :class:`Entity` dicts), ``edges``
-        (dicts with ``id``, ``subject`` and ``object`` as entity IDs, ``relation``
-        and optional ``display_relation``) and an optional ``build_id`` (default
+        (dicts with ``id``, ``subject`` and ``object`` as entity IDs, ``relation``,
+        optional ``display_relation`` and optional ``directed``, default False) and
+        an optional ``build_id`` (default
         ``"fixture"``). Entities are stored once and edges refer to them, which keeps
         fixture files short and consistent.
 
@@ -277,6 +289,7 @@ class InMemoryEvidenceStore:
                     relation=record["relation"],
                     display_relation=record.get("display_relation"),
                     object=entities[record["object"]],
+                    directed=record.get("directed", False),
                 )
             )
         return cls(edges, entities.values(), build_id=data.get("build_id", "fixture"))

@@ -220,3 +220,120 @@ def test_closed_vocabularies(raw_items, field, value):
     bad[field] = value
     with pytest.raises(ValidationError):
         QuestionItem.model_validate(bad)
+
+
+# --- directed gold points and premises -------------------------------------------
+# Built from the fixture store's directed edge E:000013: DIS_3 subtype_of DIS_G
+# (child, parent). Kept out of items.jsonl so the fixture item set stays as it is.
+
+
+def hierarchy_item(premise_reversed: bool = True, directed: bool = True) -> dict:
+    """A correctable false premise: "Why is Disease Group G a subtype of Disease
+    Three?" The graph says the reverse; the gold point holds the correction."""
+    s, o = ("DIS_G", "DIS_3") if premise_reversed else ("DIS_3", "DIS_G")
+    return {
+        "id": "fx-falsep-dir-001",
+        "prompt": "Why is Disease Group G a subtype of Disease Three?",
+        "qtype": "false_premise",
+        "answerable": "correctable",
+        "evidence_scope": "graph",
+        "gold_points": [
+            {"id": "gp1", "subject_id": "DIS_3", "relation": "subtype_of",
+             "object_id": "DIS_G", "evidence": ["E:000013"], "directed": directed},
+        ],
+        "gold_evidence": ["E:000013"],
+        "premise": {"subject_id": s, "relation": "subtype_of", "object_id": o,
+                    "directed": directed},
+        "source": "template",
+        "split": "train",
+        "template_id": "fx_why_subtype",
+        "notes": "synthetic; the premise reverses a directed hierarchy edge",
+    }
+
+
+def test_directed_gold_point_item_validates():
+    raw = by_qtype(load_items(), "single_hop")
+    raw["gold_points"] = [
+        {"id": "gp1", "subject_id": "DIS_3", "relation": "subtype_of",
+         "object_id": "DIS_G", "evidence": ["E:000013"], "directed": True},
+    ]
+    raw["gold_evidence"] = ["E:000013"]
+    item = QuestionItem.model_validate(raw)
+    assert item.gold_points[0].directed is True
+
+
+def test_directed_flag_defaults_to_false_on_fixture_items(raw_items):
+    for item in (QuestionItem.model_validate(r) for r in raw_items):
+        assert not any(gp.directed for gp in item.gold_points)
+        assert item.premise is None or item.premise.directed is False
+
+
+def test_premise_reversing_a_directed_gold_point_is_valid():
+    item = QuestionItem.model_validate(hierarchy_item(premise_reversed=True, directed=True))
+    assert (item.premise.subject_id, item.premise.object_id) == ("DIS_G", "DIS_3")
+    assert item.premise.directed and item.gold_points[0].directed
+
+
+def test_premise_reversing_an_undirected_gold_point_is_still_rejected():
+    with pytest.raises(ValidationError, match="same fact as gold point"):
+        QuestionItem.model_validate(hierarchy_item(premise_reversed=True, directed=False))
+
+
+def test_premise_equal_to_a_directed_gold_point_is_rejected():
+    with pytest.raises(ValidationError, match="same fact as gold point"):
+        QuestionItem.model_validate(hierarchy_item(premise_reversed=False, directed=True))
+
+
+def test_directed_item_survives_trace_round_trip():
+    item = QuestionItem.model_validate(hierarchy_item())
+    trace = TraceBuilder(item).build()
+    typed = vf.Trace[QuestionItem, vf.State, vf.AgentConfig]
+    assert typed.model_validate_json(trace.to_json()).task.data == item
+
+
+# --- one directed value per relation within an item --------------------------------
+
+
+def test_directed_gold_point_with_unflagged_premise_is_rejected():
+    """The mixed-flag case this check exists for.
+
+    Gold point ``DIS_3 subtype_of DIS_G`` is directed; the premise ``DIS_G subtype_of
+    DIS_3`` isn't. ``same_fact`` compares them in order (either side directed), so the
+    premise check alone would pass. But the reward compares claims with the unflagged
+    premise in either order, so the correct correction claim would count as asserting
+    the premise. The item is rejected instead.
+    """
+    raw = hierarchy_item()
+    raw["premise"]["directed"] = False
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'subtype_of'"):
+        QuestionItem.model_validate(raw)
+
+
+def test_unflagged_gold_point_with_directed_premise_is_rejected():
+    raw = hierarchy_item()
+    raw["gold_points"][0]["directed"] = False
+    with pytest.raises(ValidationError, match="mixed directed flags"):
+        QuestionItem.model_validate(raw)
+
+
+def test_gold_point_and_premise_both_directed_is_valid():
+    item = QuestionItem.model_validate(hierarchy_item())
+    assert item.premise.directed and all(gp.directed for gp in item.gold_points)
+
+
+def test_mixed_flags_between_gold_points_on_one_relation_are_rejected():
+    raw = by_qtype(load_items(), "single_hop")
+    raw["gold_points"][1] = {**raw["gold_points"][1], "directed": True}
+    with pytest.raises(ValidationError, match="mixed directed flags on relation 'associated_with'"):
+        QuestionItem.model_validate(raw)
+
+
+def test_different_relations_may_have_different_flags():
+    raw = by_qtype(load_items(), "single_hop")  # associated_with gold points, unflagged
+    raw["gold_points"].append(
+        {"id": "gp3", "subject_id": "DIS_3", "relation": "subtype_of",
+         "object_id": "DIS_G", "evidence": ["E:000013"], "directed": True}
+    )
+    raw["gold_evidence"].append("E:000013")
+    item = QuestionItem.model_validate(raw)
+    assert [gp.directed for gp in item.gold_points] == [False, False, True]

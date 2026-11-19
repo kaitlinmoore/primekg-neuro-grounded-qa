@@ -4,9 +4,11 @@ Each module fixes one interface as code, with contract tests in ``tests/contract
 
 - ``evidence``: kind-tagged evidence units (graph edges now, ``E:`` IDs; passages
   reserved, ``P:``), graph-neutral entities, and the ``EvidenceStore`` protocol with
-  a small in-memory implementation for fixtures. Edges are undirected facts.
-- ``facts``: ``same_fact`` and ``supports``, the one direction-insensitive rule for
-  comparing triples (claims, gold points, premises, edges).
+  a small in-memory implementation for fixtures. Edges are undirected facts unless
+  flagged ``directed``.
+- ``facts``: ``same_fact`` and ``supports``, the one rule for comparing triples
+  (claims, gold points, premises, edges): either direction, except in order when a
+  side is flagged ``directed``.
 - ``items``: the question item schema, a ``vf.TaskData`` subclass carrying gold
   triples, gold evidence, answerability (including correctable false premises),
   evidence scope and provenance.
@@ -33,7 +35,14 @@ from neuro_grounded_qa.contracts.evidence import (
     evidence_kind,
     is_evidence_id,
 )
-from neuro_grounded_qa.contracts.facts import Fact, TripleLike, same_fact, supports, triple
+from neuro_grounded_qa.contracts.facts import (
+    Fact,
+    TripleLike,
+    is_directed,
+    same_fact,
+    supports,
+    triple,
+)
 from neuro_grounded_qa.contracts.items import (
     QTYPE_ANSWERABLE,
     Answerable,
@@ -82,6 +91,7 @@ __all__ = [
     # facts
     "Fact",
     "TripleLike",
+    "is_directed",
     "same_fact",
     "supports",
     "triple",
