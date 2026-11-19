@@ -28,6 +28,7 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 - Run uv, pytest and vf-* only from WSL. The venv is `$UV_PROJECT_ENVIRONMENT`, a Linux venv (`bin/`), with `.venv` as the fallback when direnv isn't active; don't run uv on this checkout from Windows.
 - Claude Code shells don't run the direnv hook. Before any uv command, check `echo $UV_PROJECT_ENVIRONMENT`; if it's empty, run `eval "$(direnv export bash)"` in the checkout first. Otherwise uv quietly builds a slow `.venv` on `/mnt/c`.
 - Shell commands in this repo are plain bash run in WSL.
+- Graph data lives in `$NGQ_DATA_DIR` (`~/data/ngq`, set by `.envrc`), shared by every checkout and worktree: raw PrimeKG/OptimusKG downloads, the download manifest, duckdb builds and measurement results. It stays out of git.
 - uv; Python 3.11; `verifiers==0.4.1`, imported as `import verifiers.v1 as vf`; `prime==0.22.0` through `uv tool install` (not a project dependency).
 - Layout: a virtual uv workspace root (tests, docs, configs, scripts, dev tools) plus the environment package `environments/neuro_grounded_qa/`, the only thing that ships to the Hub (ID `neuro-grounded-qa`).
 
