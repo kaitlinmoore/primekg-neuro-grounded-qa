@@ -1,0 +1,29 @@
+{
+  "build_id": "fixture-qgen",
+  "entities": [
+    {"id": "D_A", "name": "Disease Alpha", "type": "disease"},
+    {"id": "D_A1", "name": "Disease Alpha type 1", "type": "disease"},
+    {"id": "D_B", "name": "Disease Beta", "type": "disease"},
+    {"id": "G_1", "name": "Gene One", "type": "gene/protein"},
+    {"id": "G_2", "name": "Gene Two", "type": "gene/protein"},
+    {"id": "G_3", "name": "Gene Three", "type": "gene/protein"},
+    {"id": "G_S", "name": "Shared Name", "type": "gene/protein"},
+    {"id": "P_S", "name": "shared name", "type": "effect/phenotype"},
+    {"id": "P_1", "name": "Phenotype One", "type": "effect/phenotype"},
+    {"id": "X_1", "name": "Drug One", "type": "drug"},
+    {"id": "primekg:77", "name": "Gene Old", "type": "gene/protein"}
+  ],
+  "edges": [
+    {"id": "E:000001", "subject": "D_A", "relation": "disease_protein", "display_relation": "associated with", "object": "G_1"},
+    {"id": "E:000002", "subject": "D_A", "relation": "disease_protein", "display_relation": "associated with", "object": "G_2"},
+    {"id": "E:000003", "subject": "D_A", "relation": "disease_protein", "display_relation": "associated with", "object": "G_3"},
+    {"id": "E:000004", "subject": "D_B", "relation": "disease_protein", "display_relation": "associated with", "object": "G_1"},
+    {"id": "E:000005", "subject": "D_A1", "relation": "disease_disease", "display_relation": "parent-child", "object": "D_A", "directed": true},
+    {"id": "E:000006", "subject": "X_1", "relation": "drug_protein/target", "display_relation": "target", "object": "G_1"},
+    {"id": "E:000007", "subject": "X_1", "relation": "contraindication", "display_relation": "contraindication", "object": "D_A"},
+    {"id": "E:000008", "subject": "D_B", "relation": "disease_phenotype_positive", "display_relation": "phenotype present", "object": "P_S"},
+    {"id": "E:000009", "subject": "D_B", "relation": "disease_protein", "display_relation": "associated with", "object": "G_S"},
+    {"id": "E:000010", "subject": "D_B", "relation": "disease_protein", "display_relation": "associated with", "object": "primekg:77"},
+    {"id": "E:000011", "subject": "D_A1", "relation": "disease_phenotype_positive", "display_relation": "phenotype present", "object": "P_1"}
+  ]
+}

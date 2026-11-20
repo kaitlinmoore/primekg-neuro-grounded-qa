@@ -2735,3 +2735,676 @@ call from a seed returns the alphabetically first relations
 | PD | `group:parkinson_disease_autosomal_dominant_susceptibility_to` Parkinson disease, autosomal dominant, susceptibility to | `disease_disease` | 3 | 100% | 100% | 33% | 67% | 100% |
 | PD | `group:parkinson_disease_autosomal_dominant_susceptibility_to` Parkinson disease, autosomal dominant, susceptibility to | `disease_phenotype_positive` | 11 | 100% | 100% | 45% | 45% | 100% |
 | PD | `group:parkinson_disease_autosomal_dominant_susceptibility_to` Parkinson disease, autosomal dominant, susceptibility to | `disease_protein` | 3 | 100% | 100% | 100% | 100% | 100% |
+
+## Question generation design
+
+**Status: proposed, pending Kaitlin's approval. No item has been generated.** This
+section fixes how the question set will be built from the evidence store
+(`primekg-2.1-6d869fa6bb10`) before any item exists. The templates and the
+generation rules are instruments, so they are settled first; and once real items
+exist the held-out split must stay unexamined, so the design rests only on synthetic
+examples and aggregate counts. A separate step implements it after approval.
+
+Code written with this design: `scripts/data/qgen_templates.py` (the template
+catalog, as data), `scripts/data/qgen_checks.py` (the reusable checks) and
+`scripts/data/qgen_feasibility.py` (counts per template after every check, on the
+real store). Tests: `tests/data/test_qgen_checks.py`, on the synthetic fixtures in
+`tests/fixtures/data/qgen/`.
+
+### Principles
+
+- **Gold comes from code.** The query that defines a candidate computes its gold
+  points and gold evidence. Nothing about truth or answerability is judged by a
+  person or a model.
+- **Gold lives in the store; absence is checked in the full graph.** A model can
+  retrieve only store edges, so gold answers are computed from the store. Every
+  claim that something is *not* in the graph (unanswerable pairs, absent premises,
+  graph gaps, empty lists, empty chains) is checked against the full PrimeKG graph
+  (`derived/primekg.duckdb`), so the subgraph cut can never make an item
+  unanswerable.
+- **Reachable under the run's tool config.** Pagination is off. Every gold edge is
+  returned by some call, and every absence is visible on some complete page, within
+  the default budget (8 calls, 20 results). Each item records its route.
+- **Names in questions, IDs in gold.** Questions name entities by name only; gold
+  points use entity IDs and the store's relation labels, as claims must.
+- **Neutral wording.** Every text pattern is shared by at least two answerability
+  classes (tested: `test_every_text_pattern_is_shared_by_two_answerability_classes`),
+  so the wording never tells a model whether the graph supports an answer.
+- **One build.** Items cite `E:` IDs that exist only in one store build. Item files
+  live under that `build_id` and record it.
+- **Held-out text is never seen.** The split is made by code before anyone reads
+  item text, and held-out items are never displayed, logged or shown to an AI (see
+  "Split plan and held-out protection").
+
+### Item shapes
+
+Each template has one of six shapes. The shape fixes how candidates are drawn and
+how gold is computed. "Seed" means one of the store's 28 seed nodes; every item is
+anchored on a seed, and its **disease group** (AD, PD, FTD, ALS, HD, DLB; the two
+FTD/ALS nodes count under FTD) is the anchor's. Examples use invented entities, like
+the contract fixtures.
+
+| Shape | Question pattern | Defining query (store) | Gold points |
+|---|---|---|---|
+| `list` | "Which *T* are *phrase* *S*?" | all edges of relation *r* at seed *S* (in a fixed role for the directed `disease_disease`) | every such edge; only if there are 1 to 5 (`K_LIST`) |
+| `list2` | "Which *T1* are *phrase1* *S*, and which *T2* are *phrase2* it?" | the two lists for relations *r1*, *r2* | both lists' edges, at most 6 in all |
+| `evid` | "Which edge in the knowledge graph shows that *statement*?" | one fact (*a*, *r*, *b*) | the edge stating it |
+| `evid2` | "Which edges in the knowledge graph show that *statement1*, and that *statement2*?" | two facts on one seed, same relation | the edges stating them |
+| `rel` | "What direct relation does the knowledge graph record between *A* and *B*?" | every edge between seed *A* and partner *B*, over the relations a disease and *B*'s type can share | every such edge |
+| `bridge` | pattern-specific, naming both ends *x* and *y*, asking for the intermediates | every *m* with *x* –*r_x*– *m* –*r_y*– *y*, types and hierarchy roles enforced | both edges of every chain; only if there are 1 to 3 intermediates (`K_BRIDGE`), so at most 6 gold points |
+
+Gold points are equal-weighted and all-or-nothing in reward v0, so the bounds keep
+an item's gold to a size a complete answer can state. List and bridge questions ask
+for *all* answers; a page that isn't truncated is what lets a model see it has them.
+
+**Relation phrases** (one per relation, close to PrimeKG's `display_relation`):
+
+| Relation | List clause (seed *S*) | Statement |
+|---|---|---|
+| `disease_protein` | which genes or proteins are associated with *S* | *G* is associated with *D* |
+| `disease_phenotype_positive` | which phenotypes are recorded as present in *S* | *D* has the phenotype *P* |
+| `disease_phenotype_negative` | which phenotypes are recorded as absent in *S* | the phenotype *P* is recorded as absent in *D* |
+| `indication` | which drugs are indicated for *S* | *X* is indicated for *D* |
+| `contraindication` | which drugs are contraindicated in *S* | *X* is contraindicated in *D* |
+| `off-label use` | which drugs are used off-label for *S* | *X* is used off-label for *D* |
+| `exposure_disease` | which exposures are linked to *S* | *E* is linked to *D* |
+| `disease_disease` (directed) | which diseases are listed as subtypes of *S* / which diseases is *S* listed as a subtype of | *child* is a subtype of *parent* |
+
+**Bridge patterns** (*x* and *y* named; the intermediates are the answer):
+
+| Key | Question | *r_x* | *r_y* | Seed end |
+|---|---|---|---|---|
+| `drug_target_assoc` | Which genes or proteins targeted by *x* are associated with *y*? | `drug_protein/target` | `disease_protein` | *y* |
+| `ppi_assoc` | Which proteins that interact with *x* are associated with *y*? | `protein_protein` | `disease_protein` | *y* |
+| `exposure_assoc` | Which genes or proteins that interact with *x* are associated with *y*? | `exposure_protein` | `disease_protein` | *y* |
+| `pathway_assoc` | Which genes or proteins in the pathway *x* are associated with *y*? | `pathway_protein` | `disease_protein` | *y* |
+| `indication_target` | Which drugs indicated for *x* target *y*? | `indication` | `drug_protein/target` | *x* |
+| `subtype_assoc` | Which subtypes of *x* are associated with *y*? | `disease_disease`, *m* the child | `disease_protein` | *x* |
+| `phenotype_kind` | Which phenotypes of *x* are listed as kinds of *y*? | `disease_phenotype_positive` | `phenotype_phenotype`, *m* the child | *x* |
+| `shared_protein` | Which genes or proteins are associated with both *x* and *y*? | `disease_protein` | `disease_protein` | *x* |
+| `shared_phenotype` | Which phenotypes are recorded as present in both *x* and *y*? | `disease_phenotype_positive` | `disease_phenotype_positive` | *x* |
+
+### Templates per type
+
+A template is `<family>.<key>`: one pattern applied to one relation, relation pair or
+bridge pattern. The catalog (`qgen_templates.catalog()`) has 75. Examples are
+synthetic.
+
+**Single-hop** (`answerable="yes"`):
+
+| Family | Keys | Synthetic example | Gold |
+|---|---|---|---|
+| `sh_list` | each list clause (9) | Which drugs are indicated for Disease One? | (Drug X, `indication`, Disease One), (Drug Y, `indication`, Disease One) |
+| `sh_evid` | each statement relation (8) | Which edge in the knowledge graph shows that Gene A is associated with Disease One? | (Disease One, `disease_protein`, Gene A) |
+| `sh_rel` | partner type: protein, phenotype, drug, exposure, disease | What direct relation does the knowledge graph record between Disease One and Drug X? | every edge between them, e.g. (Drug X, `contraindication`, Disease One) |
+| `sh_evid2` | `disease_protein`, `disease_phenotype_positive`, `exposure_disease` | Which edges in the knowledge graph show that Gene A is associated with Disease One, and that Gene B is associated with Disease One? | both facts |
+| `sh_list2` | any two list clauses | Which drugs are indicated for Disease One, and which exposures are linked to it? | both lists |
+
+**Multi-hop** (`yes`): `mh_bridge.<pattern>` for the nine bridge patterns. Example
+(`drug_target_assoc`): "Which genes or proteins targeted by Drug X are associated
+with Disease One?" Store: Drug X targets Gene A and Gene C; Gene A and Gene B are
+associated with Disease One. Gold: (Drug X, `drug_protein/target`, Gene A) and
+(Disease One, `disease_protein`, Gene A).
+
+**Partial** (`partial`, one graph gap):
+
+| Family | Construction | Synthetic example | Gold / gap |
+|---|---|---|---|
+| `pa_evid2.<r>` | one true fact and one absent fact on the same seed and relation, at a hashed position (first or second) | Which edges in the knowledge graph show that Gene A is associated with Disease One, and that Gene D is associated with Disease One? | gold (Disease One, `disease_protein`, Gene A); gap "no edge states that Gene D is associated with Disease One", triple (Disease One, `disease_protein`, Gene D) |
+| `pa_list2` | one non-empty list and one relation the seed has no edges of in the full graph, either order | Which genes or proteins are associated with Disease One, and which drugs are indicated for it? | gold: the gene list; gap "which drugs are indicated for Disease One: the graph records none", no triple (no single absent fact) |
+
+**Unanswerable** (`no`):
+
+| Family | Construction | Synthetic example |
+|---|---|---|
+| `un_list.<clause>` | the seed has no edge of the relation in the full graph, while a sibling seed does | Which drugs are indicated for Disease Two? |
+| `un_rel.<type>` | no edge of any relation between the seed and a near-miss partner, in the full graph | What direct relation does the knowledge graph record between Disease One and Gene D? |
+| `un_bridge.<pattern>` | no chain of the pattern between *x* and *y* in the full graph; each end has edges of its relation | Which genes or proteins targeted by Drug Z are associated with Disease One? |
+
+**False premise**:
+
+| Family | `answerable` | Construction | Synthetic example | Gold |
+|---|---|---|---|---|
+| `fp_evid.<r>` | `no` | the premise's two entities share no edge of any relation in the full graph; near-miss partner | Which edge in the knowledge graph shows that Drug Z is indicated for Disease One? | none |
+| `fp_contra.<r>` | `correctable` | the store holds the opposite relation between the same two entities (indication ↔ contraindication; phenotype present ↔ absent), and the premise's relation is absent in the full graph | Which edge in the knowledge graph shows that Drug X is indicated for Disease One? (the store says contraindicated) | (Drug X, `contraindication`, Disease One) |
+| `fp_reversed.disease_disease` | `correctable` | the premise reverses a stored subtype edge | Which edge in the knowledge graph shows that Disease One is a subtype of Disease One type 1? | (Disease One type 1, `disease_disease`, Disease One), `directed` |
+
+The `evid` pattern is shared with `sh_evid`: a true statement is a single-hop item, a
+false one a false premise, and the text can't tell them apart.
+
+### Rules for each type
+
+**Multi-hop.**
+- Patterns are the nine bridges above: four protein bridges into a seed
+  (`drug_target_assoc`, `ppi_assoc`, `exposure_assoc`, `pathway_assoc`), a drug
+  bridge out of a seed (`indication_target`), two hierarchy bridges
+  (`subtype_assoc`, `phenotype_kind`) and two shared-neighbor bridges.
+- Both ends are named; intermediates are never named (they are the answer, and the
+  leak check rejects a question that contains an intermediate's name).
+- Gold points include every edge of every chain: two per intermediate. A hierarchy
+  edge keeps its `directed` flag and child → parent order.
+- 1 to 3 intermediates. More would mean up to 6+ gold points, each worth the same
+  as the others in v0.
+
+**Partial.**
+- One supported clause plus one unsupported clause on the same seed, combined in one
+  sentence in a fixed pattern (`evid2`, `list2`) whose wording is shared with a
+  fully supported single-hop template.
+- One graph gap per item (proposed; see decisions). The gap's description names the
+  unsupported clause; its triple is set when the clause is one checkable fact
+  (`pa_evid2`), and None when it asks for a list the graph has no members of
+  (`pa_list2`).
+- A gap triple is absent from the full graph as a pair (no edge of any relation) and
+  carries the relation's `directed` flag.
+- The position of the unsupported clause is hashed, so it isn't always last.
+
+**Unanswerable.**
+- Absence is checked against the full graph: no edge of *any* relation between the
+  pair (`un_rel`), no edge of the relation at the seed (`un_list`), or no chain of
+  the pattern (`un_bridge`).
+- **Plausible pairs.** A partner must have the right type for the relation, and must
+  be a **near miss**: linked by the same relation (or chain) to a *sibling* seed of
+  the anchor's disease group (any other seed for a one-seed group). So a model
+  can't dismiss the pair on priors. `un_list` requires a sibling to have edges of
+  the relation.
+- The absence is visible within the budget: some complete page would have shown the
+  edge or chain (see "Reachability" below).
+- `un_list.disease_disease:*` yields nothing: the full-graph degree check ignores
+  the hierarchy role, and every seed has some `disease_disease` edge. It is
+  conservative and the templates are not needed.
+
+**False premise.**
+- `no`: the premise is a near-miss pair with no edge of any relation in the full
+  graph.
+- `correctable`: the store holds an edge that contradicts the premise, and that
+  edge is the gold correction. Contradictions are opposite relations on the same
+  pair (indication ↔ contraindication; phenotype present ↔ absent), or the reverse
+  of a directed subtype edge. In every case the premise triple itself is absent from
+  the full graph (in order for the directed relation).
+- Reversed hierarchy premises are legitimate correctable premises, because
+  `same_fact` compares directed facts in order. They are `fp_reversed`; whether to
+  use them is a decision below.
+- The premise's `directed` flag follows the relation's convention, so a reversed
+  subtype premise is `directed=True` with the parent as subject.
+
+### Validity checks
+
+The generator runs every check on every candidate, in this order, and drops a
+candidate at the first failure. `qgen_feasibility.py` runs the same checks now.
+
+1. **No fallback entities.** No entity in the question, gold, premise or gaps has a
+   `primekg:` ID (`qgen_checks.has_fallback`).
+2. **Unambiguous names.** Every named entity passes the name rule
+   (`qgen_checks.name_check`): search its exact name with the real
+   `search_entities` tool body (default config, 20 results); the intended entity
+   must be the **first** result, and no other result may have the same name,
+   ignoring case. The store ranks exact matches first and breaks ties by name, then
+   ID, so a second node with the same name can be second only because of its ID; the
+   model can't tell them apart from the name.
+3. **No answer in the question.** No gold entity the question doesn't name (list
+   members, bridge intermediates) appears in its text, case-insensitively on word
+   boundaries (`qgen_checks.answer_leaks`).
+4. **Full-graph absence** (`qgen_checks.FullGraph`, batched over all candidates):
+   - pair absence: no edge of any relation between the two nodes, either order
+     (unanswerable pairs, `no` premises, gap triples);
+   - triple absence: no edge of that relation between them, either order for
+     undirected relations and in order (child → parent, by each relation's file
+     convention) for hierarchy relations (correctable premises);
+   - zero degree: the seed has no edge of the relation (`un_list`, `pa_list2` gaps);
+   - empty chain: no node links *x* and *y* by the pattern (`un_bridge`), with
+     direction ignored, which only makes it stricter.
+5. **Flags.** Every gold point's evidence exists in the store, at least one cited
+   edge states it under `supports` (so a directed gold point must match the edge's
+   order), and its `directed` equals the edge's. Every premise and gap triple's
+   `directed` equals its relation's flag in the store, and the relation must be in
+   the store (`gold_point_problems`, `triple_flag_problems`).
+6. **Reachability and observability.** A **route** is a set of tool calls within
+   the default budget that meets every requirement of the item
+   (`qgen_checks.plan_route`):
+   - each named entity costs one `search_entities` call;
+   - **Show**: each gold edge is on the first page of some `get_neighbors` call
+     (filtered or not) from one of its ends;
+   - **RuleOut**: each absent fact is on no page, *visibly*: some call on one of its
+     ends, filtered to its relation (or unfiltered), returns a complete page;
+   - **Complete**: each list is on one complete page (list and `list2` questions);
+   - bridges add a completeness condition. Either both ends' filtered pages are
+     complete, so the intersection is visible, or one end's page is complete and
+     every intermediate on it is then checked toward the other end (shown if it is
+     gold, ruled out if not).
+   The planner takes the cheapest set of calls (minimum cover, deterministic order).
+   An item stores it in `notes`. Calls are made through the real tool bodies, so the
+   result cap, the payload cap and the order are exactly those of a run.
+7. **Item validation.** The candidate validates as a `QuestionItem` (labels, gold
+   evidence, premise, `graph_gaps`, flag consistency per relation). Validation
+   errors are counted, never printed: pydantic echoes input values.
+8. **Duplicates and leakage across items.**
+   - Identical question text: the later candidate is dropped.
+   - At selection: no two items share a fact (gold point, premise or gap triple, by
+     `fact_key`, which is equal exactly when `same_fact` holds), or the same set of
+     named entities, **across both splits**. A question-token Jaccard of 0.9 or more
+     with a selected item in the same split also excludes a candidate.
+   - Fact-disjointness across splits also keeps a held-out item's gold out of train.
+
+### Balance and sampling
+
+- **Type targets:** 30/25/15/20/10%, so 60/50/30/40/20 train and 30/25/15/20/10
+  held out (the expansion test's sizing). False premises split `no`/`correctable`
+  50/50 (proposed).
+- **Disease-group quotas (proposed):** AD 30%, PD 20%, ALS 15%, FTD 15% (with the
+  FTD/ALS nodes), HD 12%, DLB 8%, applied per split and type with largest-remainder
+  rounding. AD gets the largest share to keep the set Alzheimer's-centered.
+- **Relation cap:** no relation key (relation, list clause or bridge pattern)
+  supplies more than 40% of a type in a split, the expansion test's C2 logic.
+- **Seeded, deterministic selection,** per split, held-out first:
+  1. order candidates by scarcity of their (type, group) cell (valid candidates per
+     slot, scarcest first), then by `sha256(seed/order, item ID)`;
+  2. pass 1: take a candidate if its type and its (type, group) cell have room, its
+     relation key is under the cap, and it shares no fact or named-entity set with
+     any selected item and isn't a text near-duplicate;
+  3. pass 2: the same order without the cell quotas, so a cell its group can't fill
+     spills to other groups. Spills are reported.
+  Held-out selection never depends on train. Train then excludes the facts and
+  anchors held-out items used.
+- **Headroom.** At least 3 valid candidates per item, per split and type. Reserves
+  aren't stored: the selection order is deterministic, so a regeneration after a
+  code change takes the next candidates in order.
+- Scarcity-first ordering matters: plain hash order left train partial AD at 2 of 9
+  in pass 1, because other groups filled the shared relation cap first.
+
+### Split plan and held-out protection
+
+- **Split by code, before anyone reads item text.** The generator assigns each
+  candidate's split as a pure function of its item ID, the split seed and the
+  held-out share: `split_of(id, seed, 1/3)` is held-out when
+  `sha256(seed, id) < 1/3` (`qgen_checks.split_of`). Stratification by type and
+  group comes from selecting each split's targets from its own pool. Because the
+  split depends on nothing else, no change to templates, filters or the pool can move
+  a candidate from held-out to train. This is what lets train review change the
+  generator without exposing held-out items.
+- **One process, no text out.** Generation, checks, split, selection and writing
+  happen in one run that prints only aggregate counts (per type, group, relation
+  and check). Exceptions are caught and re-raised with the check name, template ID
+  and opaque item ID only (`ValidationError.errors(include_input=False)`, never
+  `str(e)`).
+- **Separate files.** `train.jsonl` and `heldout.jsonl`. The held-out file is
+  never printed, logged, summarized beyond aggregate counts, paraphrased, critiqued
+  or opened by any AI, including the generator's own worker. Items carry
+  `split="heldout"`, and the taskset already refuses to load that split without
+  `allow_heldout=true`.
+- **Manifest.** `manifest.json` records the SHA-256 of each file, counts per split ×
+  type × group × relation key, the generator version and git commit, the split seed
+  and share, the `build_id`, the store's `build.json` SHA-256 and the template
+  catalog's SHA-256. Checking the held-out file means comparing its hash and its
+  counts (a script that validates every held-out item and prints pass/fail and
+  counts only), never reading it.
+- **Review is train only.** Reviewing items (by Kaitlin, or AI critique) reads
+  `train.jsonl` only, through a viewer that refuses `heldout`. Any change prompted by
+  review is a code change (template wording, a filter, a check) applied to both
+  splits by regenerating. Held-out items are never edited one by one.
+- **Tests never touch real items.** The generator's tests run on the synthetic
+  fixtures. The real-data tests check only the manifest (hashes, counts), not item
+  text. The feasibility script has a test that its output holds no entity name or
+  ID (`test_feasibility_reports_no_names_or_ids`).
+- **Guards beyond procedure (proposed; outside this design's files):** a Claude Code
+  deny rule for reads of `$NGQ_DATA_DIR/items/**/heldout.jsonl` in the project's
+  `.claude/settings.json`, and a CLAUDE.md line naming the file as never-read. File
+  permissions can't stop an agent running as the same user, and access times on WSL
+  aren't a reliable audit, so neither is offered as a guarantee.
+
+### File layout and provenance
+
+- `$NGQ_DATA_DIR/items/<build_id>/train.jsonl`, `heldout.jsonl` and `manifest.json`.
+  Not committed (data stays out of git). Whether the question set ships in the Hub
+  package is still Kaitlin's open decision.
+- **Item ID:** `q-` plus 12 hex digits of SHA-256 over (`build_id`, template ID,
+  template parameters) (`qgen_checks.item_id`). It is stable across regenerations
+  and says nothing about type or split, which keeps blind grading blind.
+- `source="template"`, `template_id` the template's ID, `evidence_scope="graph"`,
+  `split` from the hash.
+- `notes` is a JSON string: `build_id`, generator version, template parameters
+  (entity IDs and relation keys) and the route (`Route.as_notes()`: the searches and
+  the `get_neighbors` calls, by ID).
+- Every item file is valid only for its `build_id`.
+
+### AI paraphrase (later, optional, train only)
+
+Not implemented. If it is wanted later:
+
+- It runs only on `train.jsonl`, after the split, and never sees `heldout.jsonl`.
+- A paraphrased item keeps its ID, gold and template, gets
+  `source="template+llm_paraphrase"`, and keeps the original text in `notes`
+  (`template_text`), with the model family and version that wrote the paraphrase.
+- The paraphrasing model family is one that is not evaluated, or is excluded from
+  the evaluation and the exclusion stated (the brief's guardrail).
+- Each paraphrase is checked to still ask exactly what the query answers:
+  - every named entity's name appears verbatim, so the name rule still holds;
+  - no answer entity's name appears;
+  - the relation phrase's meaning is unchanged;
+  - it still asks for *all* answers on list and bridge items, and for a *direct*
+    relation on `rel` items.
+  Code checks the first two; Kaitlin decides how the last two are checked. A
+  failing paraphrase is dropped and the template text kept.
+- Scores are reported by `source`, so any gain on AI-worded items shows up.
+- Held-out items always keep template wording. Train and held-out wording then
+  differ in style only when paraphrase is used; that is a confound to report.
+
+### Feasibility on the built store
+
+`qgen_feasibility.py` on `primekg-2.1-6d869fa6bb10`, default tool config (8 calls,
+20 results, no pagination), split seed `ngq-split-v1`, held-out share 1/3. Run on
+2026-11-19 in about 3 minutes. Two runs give identical aggregates. Counts only; the
+JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
+
+- 81,844 candidates generated, 45,868 pass every check.
+- Absence templates (`un_*`, `fp_evid`, `pa_evid2`) consider at most 300 near-miss
+  partners per (template, seed), so their counts are lower bounds.
+- `sh_evid` and `sh_rel` count the same facts twice (as two templates). Selection is
+  fact-disjoint, so the pool is smaller than the sum suggests, but every type still
+  has 16× or more of its target.
+- **Every target is met** in the simulated selection, in pass 1 (with the
+  disease-group quotas), for both splits. The only cell under 3× headroom is train
+  partial HD (11 valid for 4 slots).
+
+**Funnel per template** (candidates left after each check, in order)
+
+| Template | generated | no_fallback | names | no_leak | full_graph | flags | route | item_valid | valid |
+|---|---|---|---|---|---|---|---|---|---|
+| `fp_contra.contraindication` | 129 | 129 | 127 | 127 | 127 | 127 | 127 | 127 | 127 |
+| `fp_contra.disease_phenotype_negative` | 847 | 847 | 714 | 714 | 714 | 714 | 606 | 606 | 606 |
+| `fp_contra.disease_phenotype_positive` | 7 | 7 | 2 | 2 | 2 | 2 | 1 | 1 | 1 |
+| `fp_contra.indication` | 135 | 135 | 133 | 133 | 133 | 133 | 127 | 127 | 127 |
+| `fp_evid.contraindication` | 819 | 819 | 782 | 782 | 782 | 782 | 782 | 782 | 782 |
+| `fp_evid.disease_disease` | 274 | 274 | 252 | 252 | 252 | 252 | 252 | 252 | 252 |
+| `fp_evid.disease_phenotype_negative` | 25 | 25 | 25 | 25 | 25 | 25 | 25 | 25 | 25 |
+| `fp_evid.disease_phenotype_positive` | 2912 | 2912 | 2639 | 2639 | 2639 | 2639 | 2082 | 2082 | 2082 |
+| `fp_evid.disease_protein` | 2347 | 2331 | 2226 | 2226 | 2226 | 2226 | 2165 | 2165 | 2165 |
+| `fp_evid.exposure_disease` | 657 | 657 | 637 | 637 | 637 | 637 | 637 | 637 | 637 |
+| `fp_evid.indication` | 251 | 251 | 244 | 244 | 244 | 244 | 244 | 244 | 244 |
+| `fp_reversed.disease_disease` | 111 | 111 | 88 | 88 | 88 | 88 | 88 | 88 | 69 |
+| `mh_bridge.drug_target_assoc` | 1300 | 1300 | 1204 | 1204 | 1204 | 1204 | 834 | 834 | 834 |
+| `mh_bridge.exposure_assoc` | 192 | 192 | 178 | 178 | 178 | 178 | 73 | 73 | 73 |
+| `mh_bridge.indication_target` | 58 | 58 | 58 | 58 | 58 | 58 | 37 | 37 | 37 |
+| `mh_bridge.pathway_assoc` | 784 | 784 | 660 | 626 | 626 | 626 | 379 | 379 | 379 |
+| `mh_bridge.phenotype_kind` | 625 | 625 | 548 | 531 | 531 | 531 | 276 | 276 | 276 |
+| `mh_bridge.ppi_assoc` | 7086 | 7082 | 6115 | 6114 | 6114 | 6114 | 4318 | 4318 | 4318 |
+| `mh_bridge.shared_phenotype` | 15398 | 15398 | 13827 | 13238 | 13238 | 13238 | 2851 | 2851 | 2851 |
+| `mh_bridge.shared_protein` | 3120 | 3112 | 2770 | 2755 | 2755 | 2755 | 824 | 824 | 824 |
+| `mh_bridge.subtype_assoc` | 841 | 838 | 722 | 410 | 410 | 410 | 384 | 384 | 384 |
+| `pa_evid2.disease_phenotype_positive` | 684 | 684 | 612 | 612 | 612 | 612 | 336 | 336 | 336 |
+| `pa_evid2.disease_protein` | 286 | 277 | 269 | 269 | 269 | 269 | 230 | 230 | 230 |
+| `pa_list2` | 320 | 310 | 298 | 188 | 168 | 168 | 168 | 168 | 168 |
+| `sh_evid.contraindication` | 135 | 135 | 133 | 133 | 133 | 133 | 127 | 127 | 127 |
+| `sh_evid.disease_disease` | 111 | 111 | 88 | 88 | 88 | 88 | 88 | 88 | 69 |
+| `sh_evid.disease_phenotype_negative` | 7 | 7 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| `sh_evid.disease_phenotype_positive` | 847 | 847 | 714 | 714 | 714 | 714 | 606 | 606 | 606 |
+| `sh_evid.disease_protein` | 917 | 914 | 798 | 798 | 798 | 798 | 746 | 746 | 746 |
+| `sh_evid.exposure_disease` | 114 | 114 | 49 | 49 | 49 | 49 | 46 | 46 | 46 |
+| `sh_evid.indication` | 129 | 129 | 127 | 127 | 127 | 127 | 127 | 127 | 127 |
+| `sh_evid.off-label use` | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| `sh_evid2.disease_phenotype_positive` | 416 | 416 | 336 | 336 | 336 | 336 | 250 | 250 | 250 |
+| `sh_evid2.disease_protein` | 452 | 450 | 392 | 392 | 392 | 392 | 341 | 341 | 341 |
+| `sh_evid2.exposure_disease` | 57 | 57 | 24 | 24 | 24 | 24 | 21 | 21 | 21 |
+| `sh_list.contraindication` | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| `sh_list.disease_disease:children` | 14 | 14 | 12 | 9 | 9 | 9 | 9 | 9 | 9 |
+| `sh_list.disease_disease:parents` | 26 | 26 | 24 | 11 | 11 | 11 | 11 | 11 | 11 |
+| `sh_list.disease_phenotype_negative` | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `sh_list.disease_phenotype_positive` | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 |
+| `sh_list.disease_protein` | 7 | 6 | 6 | 5 | 5 | 5 | 5 | 5 | 5 |
+| `sh_list.indication` | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| `sh_list.off-label use` | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `sh_list2` | 58 | 56 | 52 | 26 | 26 | 26 | 26 | 26 | 26 |
+| `sh_rel.disease` | 111 | 111 | 88 | 88 | 88 | 88 | 88 | 88 | 88 |
+| `sh_rel.drug` | 267 | 267 | 263 | 263 | 263 | 263 | 257 | 257 | 257 |
+| `sh_rel.effect/phenotype` | 851 | 851 | 716 | 716 | 716 | 716 | 607 | 607 | 607 |
+| `sh_rel.exposure` | 114 | 114 | 49 | 49 | 49 | 49 | 46 | 46 | 46 |
+| `sh_rel.gene/protein` | 917 | 914 | 798 | 798 | 798 | 798 | 746 | 746 | 746 |
+| `un_bridge.drug_target_assoc` | 2162 | 2162 | 2023 | 2023 | 1962 | 1962 | 1705 | 1705 | 1705 |
+| `un_bridge.exposure_assoc` | 378 | 378 | 351 | 351 | 346 | 346 | 282 | 282 | 282 |
+| `un_bridge.indication_target` | 7 | 7 | 7 | 7 | 3 | 3 | 3 | 3 | 3 |
+| `un_bridge.pathway_assoc` | 1343 | 1343 | 1228 | 1228 | 1173 | 1173 | 1082 | 1082 | 1082 |
+| `un_bridge.phenotype_kind` | 5852 | 5852 | 5649 | 5649 | 4886 | 4886 | 4371 | 4371 | 4371 |
+| `un_bridge.ppi_assoc` | 5231 | 5227 | 4927 | 4927 | 4336 | 4336 | 3955 | 3955 | 3955 |
+| `un_bridge.shared_phenotype` | 6754 | 6754 | 6536 | 6536 | 3408 | 3408 | 1429 | 1429 | 1429 |
+| `un_bridge.shared_protein` | 4724 | 4724 | 4380 | 4380 | 3706 | 3706 | 3113 | 3113 | 3113 |
+| `un_bridge.subtype_assoc` | 3278 | 3259 | 3050 | 3050 | 1746 | 1746 | 1731 | 1731 | 1731 |
+| `un_list.contraindication` | 14 | 14 | 13 | 13 | 13 | 13 | 13 | 13 | 13 |
+| `un_list.disease_disease:children` | 13 | 13 | 13 | 13 | 0 | 0 | 0 | 0 | 0 |
+| `un_list.disease_phenotype_negative` | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 |
+| `un_list.disease_phenotype_positive` | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| `un_list.disease_protein` | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+| `un_list.exposure_disease` | 16 | 16 | 16 | 16 | 16 | 16 | 16 | 16 | 16 |
+| `un_list.indication` | 17 | 17 | 16 | 16 | 16 | 16 | 16 | 16 | 16 |
+| `un_rel.disease` | 274 | 274 | 252 | 252 | 252 | 252 | 252 | 252 | 252 |
+| `un_rel.drug` | 1067 | 1067 | 1023 | 1023 | 1023 | 1023 | 1023 | 1023 | 1023 |
+| `un_rel.effect/phenotype` | 2915 | 2915 | 2642 | 2642 | 2642 | 2642 | 2085 | 2085 | 2085 |
+| `un_rel.exposure` | 657 | 657 | 637 | 637 | 637 | 637 | 637 | 637 | 637 |
+| `un_rel.gene/protein` | 2347 | 2331 | 2226 | 2226 | 2226 | 2226 | 2165 | 2165 | 2165 |
+
+**Valid candidates per split and type, against targets**
+
+| Type | train valid | train target | multiple | held-out valid | held-out target | multiple |
+|---|---|---|---|---|---|---|
+| single_hop | 2729 | 60 | 45x | 1415 | 30 | 47x |
+| multi_hop | 6684 | 50 | 134x | 3292 | 25 | 132x |
+| partial | 482 | 30 | 16x | 252 | 15 | 17x |
+| unanswerable | 15878 | 40 | 397x | 8019 | 20 | 401x |
+| false_premise:no | 4136 | 10 | 414x | 2051 | 5 | 410x |
+| false_premise:correctable | 631 | 10 | 63x | 299 | 5 | 60x |
+
+**Valid candidates per type and relation key, both splits**
+
+| Type | Relation key | Valid |
+|---|---|---|
+| false_premise:correctable | contraindication | 127 |
+| false_premise:correctable | disease_disease | 69 |
+| false_premise:correctable | disease_phenotype_negative | 606 |
+| false_premise:correctable | disease_phenotype_positive | 1 |
+| false_premise:correctable | indication | 127 |
+| false_premise:no | contraindication | 782 |
+| false_premise:no | disease_disease | 252 |
+| false_premise:no | disease_phenotype_negative | 25 |
+| false_premise:no | disease_phenotype_positive | 2082 |
+| false_premise:no | disease_protein | 2165 |
+| false_premise:no | exposure_disease | 637 |
+| false_premise:no | indication | 244 |
+| multi_hop | drug_target_assoc | 834 |
+| multi_hop | exposure_assoc | 73 |
+| multi_hop | indication_target | 37 |
+| multi_hop | pathway_assoc | 379 |
+| multi_hop | phenotype_kind | 276 |
+| multi_hop | ppi_assoc | 4318 |
+| multi_hop | shared_phenotype | 2851 |
+| multi_hop | shared_protein | 824 |
+| multi_hop | subtype_assoc | 384 |
+| partial | disease_phenotype_positive | 336 |
+| partial | disease_protein | 230 |
+| partial | list2 | 168 |
+| single_hop | contraindication | 132 |
+| single_hop | disease | 88 |
+| single_hop | disease_disease | 69 |
+| single_hop | disease_disease:children | 9 |
+| single_hop | disease_disease:parents | 11 |
+| single_hop | disease_phenotype_negative | 3 |
+| single_hop | disease_phenotype_positive | 858 |
+| single_hop | disease_protein | 1092 |
+| single_hop | drug | 257 |
+| single_hop | effect/phenotype | 607 |
+| single_hop | exposure | 46 |
+| single_hop | exposure_disease | 67 |
+| single_hop | gene/protein | 746 |
+| single_hop | indication | 129 |
+| single_hop | list2 | 26 |
+| single_hop | off-label use | 4 |
+| unanswerable | contraindication | 13 |
+| unanswerable | disease | 252 |
+| unanswerable | disease_phenotype_negative | 12 |
+| unanswerable | disease_phenotype_positive | 3 |
+| unanswerable | disease_protein | 4 |
+| unanswerable | drug | 1023 |
+| unanswerable | drug_target_assoc | 1705 |
+| unanswerable | effect/phenotype | 2085 |
+| unanswerable | exposure | 637 |
+| unanswerable | exposure_assoc | 282 |
+| unanswerable | exposure_disease | 16 |
+| unanswerable | gene/protein | 2165 |
+| unanswerable | indication | 16 |
+| unanswerable | indication_target | 3 |
+| unanswerable | pathway_assoc | 1082 |
+| unanswerable | phenotype_kind | 4371 |
+| unanswerable | ppi_assoc | 3955 |
+| unanswerable | shared_phenotype | 1429 |
+| unanswerable | shared_protein | 3113 |
+| unanswerable | subtype_assoc | 1731 |
+
+**Valid candidates per type and disease group, both splits**
+
+| Type | AD | PD | ALS | FTD | HD | DLB |
+|---|---|---|---|---|---|---|
+| single_hop | 808 | 1998 | 119 | 829 | 295 | 95 |
+| multi_hop | 2056 | 4284 | 271 | 2014 | 1065 | 286 |
+| partial | 45 | 405 | 43 | 177 | 18 | 46 |
+| unanswerable | 3038 | 9385 | 2065 | 7146 | 143 | 2120 |
+| false_premise:no | 829 | 2513 | 831 | 1173 | 34 | 807 |
+| false_premise:correctable | 138 | 436 | 42 | 220 | 83 | 11 |
+
+**Simulated selection** (pass 1 with disease-group cells; pass 2 spills)
+
+| Split | Type | Target | After pass 1 | Selected | Cells short (selected/target) |
+|---|---|---|---|---|---|
+| heldout | single_hop | 30 | 30 | 30 | none |
+| heldout | multi_hop | 25 | 25 | 25 | none |
+| heldout | partial | 15 | 15 | 15 | none |
+| heldout | unanswerable | 20 | 20 | 20 | none |
+| heldout | false_premise:no | 5 | 5 | 5 | none |
+| heldout | false_premise:correctable | 5 | 5 | 5 | none |
+| train | single_hop | 60 | 60 | 60 | none |
+| train | multi_hop | 50 | 50 | 50 | none |
+| train | partial | 30 | 30 | 30 | none |
+| train | unanswerable | 40 | 40 | 40 | none |
+| train | false_premise:no | 10 | 10 | 10 | none |
+| train | false_premise:correctable | 10 | 10 | 10 | none |
+
+**Cells under 3x headroom** (valid candidates per item, by split, type and group)
+
+| Split | Type | Group | Target | Valid | Multiple |
+|---|---|---|---|---|---|
+| train | partial | HD | 4 | 11 | 2.8x |
+
+**Route length** (tool calls in the cheapest route, valid candidates)
+
+| Calls | Candidates |
+|---|---|
+| 2 | 158 |
+| 3 | 18654 |
+| 4 | 22899 |
+| 5 | 3171 |
+| 6 | 525 |
+| 7 | 303 |
+| 8 | 196 |
+
+**Name-rule failures** (candidates dropped, by reason): not_first 6401, shared_name 519
+
+
+**Where candidates are lost.**
+- **Names.** 6,920 candidate drops: 6,401 `not_first` and 519 `shared_name`. All
+  come from 48 names shared by 96 store nodes, mostly across types: 26
+  disease/phenotype pairs, 13 drug/exposure pairs, 6 process/pathway pairs. A
+  question that names the type ("the phenotype …") could disambiguate them; the
+  rule is kept strict for now (decision 8).
+- **Routes.** These are mostly shared-neighbor bridges (`mh_bridge.shared_phenotype`
+  keeps 2,851 of 13,238) and phenotype items: a phenotype shared by many diseases
+  has a truncated page, and a big seed's phenotype page is truncated too, so neither
+  end can show the edge or rule an absence out.
+- **Leaks.** `subtype_assoc` loses 312 of 722 and `pa_list2` and `sh_list2` lose a third to a half:
+  a subtype's name usually contains its parent's ("familial *X*" under *X*), so the
+  answer would be in the question. Working as intended.
+
+### Shortfalls and how to fill them
+
+There is no shortfall against 200 + 100 at the type level, and none at the cell level
+after pass 1. The thin spots:
+
+- **Partial is the tightest type** (16× overall, all three relation keys needed
+  under the 40% cap). HD has only `disease_phenotype_positive` partial candidates
+  (18 in all), so train partial HD sits at 2.8×. To fill: let the HD cell spill
+  (already the pass-2 rule), or add partial templates that combine a supported
+  multi-hop clause with an absent one, which would draw on the much larger bridge
+  pool.
+- **`pa_evid2.exposure_disease` yields nothing.** Exposure edges sit on main
+  disease nodes, whose siblings have none, so no near-miss partner exists. Drop the
+  template, or allow near misses through any seed for this relation.
+- **`sh_list` is small** (36 candidates over all clauses). Few seeds have 1 to 5
+  edges of a relation. It isn't needed for volume (`sh_evid` and `sh_rel` fill
+  single-hop), but list questions are the most natural wording. Raising `K_LIST` to
+  8 would add some, at the cost of larger gold sets.
+- **Few `indication_target` bridges** (37 answerable, 3 unanswerable), and few
+  `off-label use` or `disease_phenotype_negative` items: these relations are rare
+  around the seeds. They add variety and don't carry volume.
+- **Correctable false premises lean on phenotypes:** 606 of 930 are "the phenotype
+  *P* is recorded as absent in *D*" against a stored "present" edge. The 40% cap
+  keeps them to 40% of false premises; indication/contraindication (254) and
+  reversed subtypes (69) supply the rest.
+
+### Decisions for Kaitlin
+
+1. **Size.** 200 + 100 is feasible with headroom everywhere but train partial HD.
+   The pool would support more (partial is the limit, at roughly 16× now).
+2. **False premises:** the `no`/`correctable` mix (proposed 50/50, which the reward
+   spec's baseline assumes), and whether reversed subtype premises
+   (`fp_reversed`, 69 candidates) are used.
+3. **Graph gaps per partial item:** proposed one. Two would need three-clause
+   templates.
+4. **Disease-group quotas** (proposed AD 30, PD 20, ALS 15, FTD 15, HD 12, DLB 8).
+5. **Bounds:** `K_LIST` 5, `K_BRIDGE` 3 intermediates.
+6. **Near-miss plausibility** for absence items (partners linked to a sibling seed),
+   rather than any type-matched node.
+7. **Domain review of the wording.** Templates to look at:
+   - `disease_disease` as "is a subtype of": some MONDO parent-child links read oddly
+     as subtypes. "Hereditary late onset Parkinson disease" is a *parent* of the
+     grouped Parkinson disease node (expansion test). Reversed-subtype premises built
+     on such an edge would be confusing rather than false.
+   - `disease_phenotype_positive` as "phenotype": about 52 of the 847 seed phenotype facts (by a name match)
+     are HPO inheritance, onset or course terms (e.g. "autosomal dominant
+     inheritance", "adult onset", "progressive"). Questions such as "Which phenotypes
+     are recorded as present in both *x* and *y*?" then have inheritance modes as
+     answers. A filter on HPO's mode-of-inheritance and clinical-modifier subtrees
+     would remove them (not applied; counts above include them).
+   - `fp_contra.disease_phenotype_negative`: "the phenotype *P* is recorded as absent
+     in *D*", false because the graph records it as present. Accurate, but it is the
+     awkward direction of the opposition.
+   - `exposure_disease` as "linked to" (CTD associations, not causal claims), and
+     `exposure_protein` as "interacts with" in `exposure_assoc`.
+   - `contraindication` as "contraindicated in", and `indication_target` ("Which drugs
+     indicated for *x* target *y*?"): DrugBank targets include non-mechanistic ones.
+   - `shared_phenotype` and `shared_protein` with an arbitrary second disease: some
+     pairs are biologically unrelated, so the question reads as arbitrary.
+8. **Name rule:** keep it strict, or allow a cross-type duplicate when the question
+   names the type (would recover part of the 6,920 drops).
+9. **Phenotype filter** for HPO inheritance and modifier terms (decision 7).
+10. **Relation-filter hint in the system prompt.** Every route in the design uses
+    filtered `get_neighbors` calls; an unfiltered call from a big seed shows only its
+    alphabetically first relations. A one-line hint ("pass `relation` to narrow a
+    long list") would make the designed routes discoverable. It is a change to the
+    taskset's prompt, not to question generation.
+11. **Held-out guards:** the Claude Code deny rule and the CLAUDE.md line (project
+    settings, outside the data code).
+12. **Split seed** (`ngq-split-v1`) and held-out share (1/3). Set once; changing the
+    seed reassigns every candidate.
+
+### What the implementation needs
+
+- A generator script in `scripts/data/` that reuses `qgen_templates`,
+  `qgen_checks` and the shape generators and `select` in `qgen_feasibility.py`
+  (move them into a shared module first). It writes the two files and the manifest,
+  and prints only counts.
+- A train-only viewer, and a held-out integrity check that prints hashes, counts
+  and pass/fail only.
+- Tests on synthetic fixtures for writing, the manifest, split stability under pool
+  changes, and the no-text-output property of every script that touches items.
+- No contract change is needed. Two are worth considering: a `build_id` field on
+  `QuestionItem` (it lives in `notes` and the manifest for now), and a structured
+  `notes` (now a JSON string).
+- Context mode (the brief's tool-free mode) needs each item's candidate evidence;
+  this design doesn't define it. The route's pages are a natural source.
+- `configs/local.toml` must point `items_path` at `train.jsonl` and `store_path` at
+  the store for real runs. The committed config stays on fixtures.
