@@ -6,6 +6,8 @@ Will cover: the evidence source and subgraph, the question set and its splits, t
 reward and how it is computed from the trace, the reward-hacking audit, reward
 validation against hand labels, the confirmatory run, and limitations.
 
+The smoke and verification results below were scored under reward v0; rescored under reward v1 and v1.1 (`docs/reward_spec.md`), every one is unchanged.
+
 ## Smoke run (2026-11-20)
 
 A plumbing check, not an evaluation. It ran real models through the whole environment
