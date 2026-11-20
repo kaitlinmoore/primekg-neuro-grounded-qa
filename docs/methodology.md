@@ -91,3 +91,39 @@ held-out item was loaded.
 
 Run outputs, per-run summaries and the before/after comparison stay in `outputs/`
 (gitignored).
+
+## Verification run 2 (2026-11-20)
+
+Exploratory instrument iteration on **train** items, not an evaluation. Two more changes
+(see `docs/changelog.md`, 2026-11-20): the system prompt lists the store's 27 relation
+labels, and a filtered `get_neighbors` with a real label the entity has no edges for
+states that absence before listing the entity's labels. The reward and the parser did
+not change. The same two models, endpoint, settings and 18 train items as the
+verification run, one rollout each. No held-out item was loaded.
+
+**What it showed.** With one rollout per item these are observations, not effects.
+
+- The plumbing held: every trace rescored offline to its recorded reward and carried
+  its provenance, no tool result was rejected, and no claim named a member ID of a
+  grouped node.
+- "Unknown relation" results went from 10 (7 Haiku, 3 Sonnet) to 0.
+- With the labels in hand, both models filtered almost every `get_neighbors` call
+  (Haiku 41 of 47, Sonnet 42 of 43, against 33 of 68 and 27 of 56). Unfiltered pages
+  cut at the result cap, the ones whose notes list an entity's labels with counts, became
+  rare (Haiku 4, Sonnet 0), and filtered pages cut at the cap, whose notes carry no
+  counts, became more common (9 each).
+- The absence note appeared 9 times. After each, the model moved to the other entity,
+  another real label or its final reply. Four of the nine came from
+  `disease_phenotype_negative`, a label no model had queried before it appeared in the
+  prompt.
+- On the 7 `answerable = "no"` items, the number of answer-form replies didn't change
+  (Haiku 3, Sonnet 2), but two items moved each way. The two that moved toward an
+  answer had no absence note. Both were shared-object questions where the model saw
+  two complete, disjoint lists and wrote "nothing is shared" as an answer with the gap
+  flagged.
+- One new failure: on a `yes` item, Sonnet got a filtered page cut at 20, fetched the
+  next edge IDs one by one, ran out of calls before reaching the two edges it needed,
+  and abstained. In the verification run, an unknown-relation note had given it the
+  relation's edge count, and it came from the phenotype side instead.
+
+Run outputs, per-run summaries and the comparison stay in `outputs/` (gitignored).
