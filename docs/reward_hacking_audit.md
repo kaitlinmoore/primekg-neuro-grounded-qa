@@ -289,9 +289,3 @@ policy predict `no` without gold is untested here.
   traces mean nothing here.
 - **Deterministic**: scripted policies give the same result every run, so there is
   no variance to report.
-
-## AI assistance
-
-The policies, runner, measurement code, tests and this document were written by
-Claude (Claude Code) from a task brief, and checked by the test suite and the
-end-to-end comparison above. The findings are the code's output on the train split.

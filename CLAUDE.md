@@ -18,7 +18,7 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 - Secrets in .env; .env.example lists key names only.
 - Git: small fixes (typos, wording, links, one-line config) go straight to main. Anything that changes behavior, an instrument, or a version goes on a branch with a pull request.
 - Commit with the repo's configured identity (GitHub no-reply address).
-- No AI attribution in commits or pull requests: no Co-Authored-By trailers, session links or "Generated with" footers. AI assistance is disclosed in the README instead.
+- No AI attribution in commits or pull requests: no Co-Authored-By trailers, session links or "Generated with" footers. AI assistance is disclosed only in the README's AI assistance section; other docs, notebooks and code don't get their own AI-assistance sections or notes.
 - Model runs go through `scripts/run.sh`, which refuses to start without `-m` and `--client.base-url` and runs `vf-run` with `configs/local.toml` (local subprocess runtime, `null` harness: the model sees only the KG tools, because the default `bash` harness gives it a local shell that can read gold). Every run names its model and endpoint explicitly. Prime Inference, Prime sandboxes and `prime eval push` are used only deliberately. Run outputs stay in `outputs/` (gitignored).
 
 ## Environment

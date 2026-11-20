@@ -83,3 +83,5 @@ Code is released under the MIT License. Data sources keep their own licenses.
 ## AI assistance
 
 This project is built with AI assistance (Claude). What was AI-assisted, and how the work was checked, will be documented here.
+
+The reward-hacking audit's exploit policies, runner, measurement code, tests and audit document were written with AI assistance, and checked by the test suite and an end-to-end comparison of the stub runs against an in-process simulator.
