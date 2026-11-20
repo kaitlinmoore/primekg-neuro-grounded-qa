@@ -13,6 +13,19 @@ reading them has to be a visible, deliberate choice. Items of other splits are
 skipped *before* they are validated, so a validation error can never print a held-out
 item.
 
+**Build check.** Every item names the store build its evidence IDs come from
+(``QuestionItem.build_id``). :meth:`NeuroGroundedQATaskset.load` reads the store's
+``build_id`` cheaply (``tools.read_build_id``, which reads ``build.json`` only) and
+refuses, with an error naming both IDs, any loaded item whose ``build_id`` differs.
+This runs host-side in ``load``, the first place the taskset reads the items file.
+``load`` builds every task before returning, and the runner schedules no rollout
+until it has a task, so a mismatched pair fails before any rollout. (The tool server
+has already started by then: ``vf-run`` enters ``env.serving()`` before iterating the
+taskset.) The check isn't in the config validator, although both paths are known
+there: it would read and validate the whole items file every time a config is built,
+``vf-run --dry-run`` included, and ``model_copy`` skips validators, so ``load`` would
+need the check anyway.
+
 **Reward.** :class:`NeuroGroundedQATask` inherits ``reward.GroundingRewardMixin``:
 one ``@vf.reward`` (the grounding reward, in [0, 1]) and one keyed ``@vf.metric``
 (components and early-warning metrics). ``docs/reward_spec.md`` defines both.
@@ -66,6 +79,8 @@ You answer biomedical questions using only evidence from a knowledge graph. You 
 - {prefix}_get_edge(edge_id): fetch one edge by its evidence ID.
 
 Tool results are JSON. Each edge in a result's "evidence" list has an "id" (its evidence ID, such as E:000001), a "subject", a "relation", an "object" and "directed" (true or false). You can make at most {max_calls} tool calls, and each returns at most {max_results} items.
+
+Without a relation, {prefix}_get_neighbors on an entity with many edges returns only the edges of its first few relations; pass a relation label to list the edges of one relation.
 
 Only evidence returned by your own tool calls in this conversation counts. Background knowledge counts for nothing.
 
@@ -126,15 +141,31 @@ class NeuroGroundedQAConfig(vf.TasksetConfig):
         return self
 
 
-def load_items(path: str | Path, split: str, allow_heldout: bool = False) -> list[QuestionItem]:
+def load_items(
+    path: str | Path,
+    split: str,
+    allow_heldout: bool = False,
+    store_build_id: str | None = None,
+) -> list[QuestionItem]:
     """Read the items of one split from a JSONL file.
 
     Lines whose ``split`` differs are skipped without validation. Blank lines are
     ignored.
 
+    Args:
+        path: the items file.
+        split: the split to keep.
+        allow_heldout: must be True to load ``split="heldout"``.
+        store_build_id: the ``build_id`` of the store the items will be scored
+            against. When given, every loaded item's ``build_id`` must equal it: an
+            item's evidence IDs name edges of one build only, so pairing it with
+            another build would score it against the wrong edges. None skips the
+            check (for reading items with no store in hand).
+
     Raises:
         ValueError: held-out split not allowed; a line that isn't a JSON object or
-            has no ``split``; an item that fails validation; or no items in ``split``.
+            has no ``split``; an item that fails validation; an item whose
+            ``build_id`` differs from ``store_build_id``; or no items in ``split``.
         FileNotFoundError: if ``path`` doesn't exist.
     """
     check_split_allowed(split, allow_heldout)
@@ -150,12 +181,33 @@ def load_items(path: str | Path, split: str, allow_heldout: bool = False) -> lis
             if record["split"] != split:
                 continue
             try:
-                items.append(QuestionItem.model_validate(record))
+                item = QuestionItem.model_validate(record)
             except ValueError as e:
                 raise ValueError(f"{path}:{lineno}: invalid item: {e}") from e
+            check_build_id(item, store_build_id, where=f"{path}:{lineno}")
+            items.append(item)
     if not items:
         raise ValueError(f"{path}: no items in split {split!r}")
     return items
+
+
+def check_build_id(item: QuestionItem, store_build_id: str | None, where: str = "") -> None:
+    """Raise unless ``item`` was built for the store build ``store_build_id``.
+
+    The message names both build IDs and ``where`` (a file and line), never the
+    item's text, so it is safe to print for any split. None skips the check.
+
+    Raises:
+        ValueError: if the item's ``build_id`` differs from ``store_build_id``.
+    """
+    if store_build_id is None or item.build_id == store_build_id:
+        return
+    prefix = f"{where}: " if where else ""
+    raise ValueError(
+        f"{prefix}item build_id {item.build_id!r} does not match the evidence store's "
+        f"build_id {store_build_id!r}. Items cite evidence IDs of one store build; "
+        "point items_path and tools.store_path at files from the same build."
+    )
 
 
 def file_sha256(path: str | Path) -> str:
@@ -240,11 +292,21 @@ class NeuroGroundedQATaskset(vf.Taskset[NeuroGroundedQATask, NeuroGroundedQAConf
 
     def load(self) -> list[NeuroGroundedQATask]:
         """Build one task per item of the configured split, with the system prompt
-        and the run's provenance."""
+        and the run's provenance.
+
+        Refuses any item whose ``build_id`` differs from the store's (see
+        "Build check" in the module docstring). ``load`` returns a list, so the whole
+        file is checked before the first task reaches the runner.
+        """
         cfg = self.config
         system_prompt = render_system_prompt(cfg.tools)
-        items = load_items(cfg.items_path, cfg.split, cfg.allow_heldout)
         provenance = self.provenance()
+        items = load_items(
+            cfg.items_path,
+            cfg.split,
+            cfg.allow_heldout,
+            store_build_id=provenance["store_build_id"],
+        )
         return [
             NeuroGroundedQATask(
                 item.model_copy(update={"system_prompt": system_prompt}),
