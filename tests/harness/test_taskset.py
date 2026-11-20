@@ -285,6 +285,9 @@ def test_setup_writes_provenance_into_trace_info():
             "partial_flag_credit": 0.2,
             "correctable_abstain_credit": 0.7,
             "flag_only_counts": True,
+            "mu": 1.0,
+            "nongold_allowance": 3,
+            "version": "v1",
         },
     }
     # trace.info is serialized with the trace (traces.jsonl).

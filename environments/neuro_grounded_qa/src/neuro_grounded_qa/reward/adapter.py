@@ -132,7 +132,8 @@ def all_metrics(
 class GroundingRewardMixin:
     """Grounding reward and metrics for a ``vf.Task`` whose data is a ``QuestionItem``.
 
-    Set ``reward_params`` on the subclass to change λ or the partial-credit values.
+    Set ``reward_params`` on the subclass to change the constants (λ, the
+    partial-credit values, μ, the allowance); the default is reward v1.
     Verifiers passes the task's data as ``task`` and the trace as ``trace``.
     """
 

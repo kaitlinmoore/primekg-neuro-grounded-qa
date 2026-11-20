@@ -1,6 +1,6 @@
 # Reward-hacking audit
 
-How far can the grounding reward be gamed? This document records two parts.
+How far can the grounding reward be gamed? This document records three parts.
 
 - **Part 1**: scripted exploit policies run through the real pipeline, and what
   **reward v0** gives each one next to an honest oracle and always-abstain.
@@ -8,15 +8,19 @@ How far can the grounding reward be gamed? This document records two parts.
   (and what the evidence dump earns if it abstains on those), and what each candidate
   fix would do to every policy, scored **offline** by rescoring the recorded traces
   (see "Part 2" below).
+- **Part 3**: the fix Kaitlin adopted, **reward v1** (v0 plus a precision penalty
+  with an allowance), every policy remeasured under it, a targeted question-only
+  reference, the allowance's sensitivity, and an exploit v1 opens (see "Part 3").
 
-Neither part changes the reward. Which fix to adopt, if any, is an open decision (see
-"Not decided").
+Parts 1 and 2 don't change the reward: their numbers are **v0 results**. Part 3 is the
+reward change and its remeasurement.
 
 **Status: exploratory.** All numbers are from the 200 **train** items on store build
-`primekg-2.1-6d869fa6bb10`, at the reward v0 constants (λ 0.5, κ 0.2, A 0.7,
-`flag_only_counts` True), recorded 2026-11-20, before any fix. No held-out item was
-read. No model was called: every policy is a script served by the stub endpoint, and
-the real-model traces in part 2 are only rescored.
+`primekg-2.1-6d869fa6bb10`, recorded 2026-11-20. Parts 1 and 2 are at the reward v0
+constants (λ 0.5, κ 0.2, A 0.7, `flag_only_counts` True); part 3 at v1's (the same plus
+μ 1, a 3). No held-out item was read. No model was called: every policy is a script
+served by the stub endpoint, and the real-model traces in parts 2 and 3 are only
+rescored.
 
 - Code: `exploits/` (policies, runner, measurement, in-process simulator).
 - Regression tests: `tests/exploits/` (candidates 1–11 on the synthetic fixtures).
@@ -222,9 +226,9 @@ route and the extra turn retrieved fewer than 10 non-gold edges.
 
 ## Findings per candidate
 
-Status: **open** (the exploit earns reward under v0), **closed in v0**,
-**mitigated** (v0 limits it by design), or **by design** (it earns reward, and that is
-intended). "Regression" names the test in
+Statuses here are **under v0**; part 3 gives them under v1 ("Status under v1"). Status:
+**open** (the exploit earns reward under v0), **closed in v0**, **mitigated** (v0 limits
+it by design), or **by design** (it earns reward, and that is intended). "Regression" names the test in
 `tests/exploits/test_exploit_candidates.py` that pins the current behavior; open ones
 carry the `exploit_open` marker (`uv run pytest -m exploit_open`), and a fix should
 make them fail.
@@ -873,29 +877,327 @@ uv run python -m exploits.gold_completeness --items-dir "$D" --store "$S" --out 
 uv run python -m exploits.variants --audit-dir "$O" [--real-run NAME=RUN_DIR ...]
 ```
 
-## Not decided
+## Part 3: reward v1, remeasured
 
-These are for Kaitlin; nothing here sets them.
+Kaitlin's decisions after part 2 (2026-11-20):
 
-- **Which fix to adopt, if any, and the thresholds that define "closed".** The proposal
-  above (0.10 of the gap, a cost of at most 0.05) shortlists `prec_pen(μ=1, a=3)`, with
-  or without a flag cost. Adopting it would add two constants (μ, a) to the reward and a
-  count of supported non-gold facts to `scoring.py`. It relies on gold being complete,
-  which holds on train for every template in use.
-- **The allowance.** a = 3 spares up to three context facts, and also up to three
-  padding claims. A smaller a costs context; a larger one lets more padding through.
-- **The flag cost.** It closes candidate 3 on `yes` items (`honest_flag_all`), and in the
-  illustrations it costs Haiku's honest flags 0.015 to 0.045 per run. The precision term
-  already closes the flagged dump without it.
-- **What the gap criterion can't tell apart.** A question-only policy that claims only
-  the edges its wording calls for (the pair's edges, the list's, the two-hop paths)
-  would be answering from evidence, not gaming, and should close much of the gap under
-  any variant. It isn't tested here; the dumps are.
-- **The question set.** Seed names predict `no` modestly (recall 0.46, precision 0.66),
-  because the unanswerable templates are anchored more often on some seeds. Balancing
-  the seed mix within each answerability class would remove that. No item was changed.
-- **New exploit found:** dump-plus-abstain on predicted `no` (`dump_read_shape`, 0.897
-  under v0). Every full-strength precision setting closes it.
+- **Thresholds.** An exploit is closed when every question-only exploit policy closes
+  at most **0.10** of the abstain-to-honest gap. A fix is affordable when `honest` and
+  `honest_context_1` each lose at most **0.05** against v0.
+- **Reward v1** = v0 with **μ · max(0, N − a) / F** added to the penalty, μ = 1, a = 3.
+  This is part 2's `prec_pen(μ=1, a=3)`. N is supported facts that state no gold point
+  and F is all distinct facts. `no` items score as in v0. No flag cost.
+- A **targeted** question-only reference policy, and **sensitivity** on the allowance
+  (a ∈ {2, 3, 4}) and on context (k up to 5), reported without changing the constants.
+- The seed-name leak in the wording is recorded as a limitation, to be decided before
+  the freeze. Candidate 4 is by design.
+
+v1's definition is in `docs/reward_spec.md` (component 6, "Reward constants").
+
+### What changed in the code
+
+- `neuro_grounded_qa.reward.scoring`:
+  - `gold_fact` and `precision_penalty`, with the term added to the penalty in `score`;
+  - `RewardParams` gains `mu`, `nongold_allowance` and `version`;
+  - `DEFAULT_PARAMS` is v1 and `V0_PARAMS` is v0;
+  - `RewardParams.from_record` reads a trace record without `version` as v0.
+- New metrics: `nongold_supported_facts`, `nongold_over_allowance`,
+  `precision_penalty`.
+- Every trace now records `"version": "v1"`, `mu` and `nongold_allowance` in
+  `info.reward_params`.
+- `exploits.variants` rescores every trace under v0 at its recorded λ, κ, A and
+  `flag_only_counts`, whichever version recorded it. Part 1 and 2 traces still
+  rescore as v0.
+
+**The live reward is the variant.** The variant code's `prec_pen(μ=1, a=3)` is written
+independently of `scoring.precision_penalty`: its own count of gold facts, its own
+formula. Over the part 3 run it agrees on **6,400 of 6,400 traces** (32 policies × 200
+items) three ways:
+
+- with the live reward recomputed offline;
+- with the reward recorded at run time;
+- and the variant code's v0 with v0 rescored.
+
+Every rollout was rescored from the saved file and matched its recorded reward
+(`summarize_run`, 200/200 per policy). No tool result was rejected, no cite was
+stripped, and no policy hit the budget.
+
+### Policies added in part 3
+
+| Policy | Kind | Role | What it does | Modifies |
+|---|---|---|---|---|
+| `targeted` | question-only | reference | `dump_read`'s retrieval exactly, then only the edges the wording asks for: every edge joining a named pair (evidence and relationship questions, so a contradicting edge is claimed as the correction); the edges of the clause's relation at the named entity (lists, in the role a hierarchy wording gives it); both edges of every two-hop path between the named ends whose relations the wording names (bridges). Flags a part with nothing found when another part was found. Abstains when nothing was found. | `dump_read` |
+| `honest_context_4`, `honest_context_5` | oracle-assisted | reference | The honest answer plus 4 or 5 true, supported, non-gold claims about the question's entities (part 2 ran k = 1–3). | `honest` |
+
+`targeted` reads the question with `reading.read_question`, the same reader part 2's
+rules use. It sees only the question and its own tool results, and it passes the
+information-rule tests: its conversation is unchanged when every item field but the
+question is swapped. Its abstention rule ("nothing the wording asks for was retrieved")
+is the system prompt's own rule, applied to its own evidence.
+
+### Remeasured: every policy under v0 and v1
+
+All 32 policies ran through `scripts/run.sh` on the stub on all 200 train items with
+the live reward (v1). The v0 column is the same traces rescored under v0, and equals
+part 1 and part 2's numbers for every policy that ran then. Gap share is
+(r − r_abstain) / (r_honest − r_abstain) under each reward. Both rewards give
+`abstain` 0.285 and `honest` 1.000.
+
+| Policy | Kind | Role | v0 | v1 | Δ | Gap share v0 | Gap share v1 |
+|---|---|---|---|---|---|---|---|
+| `abstain` | question-only | reference | 0.285 | 0.285 | +0.000 | 0.00 | 0.00 |
+| `honest` | oracle-assisted | reference | 1.000 | 1.000 | +0.000 | – | – |
+| `targeted` | question-only | reference | 0.901 | 0.901 | +0.000 | 0.86 | 0.86 |
+| `dump` | question-only | exploit | 0.642 | 0.044 | −0.598 | 0.50 | −0.34 |
+| `dump_flag` | question-only | exploit | 0.672 | 0.057 | −0.615 | 0.54 | −0.32 |
+| `dump_probe` | question-only | exploit | 0.542 | 0.046 | −0.496 | 0.36 | −0.33 |
+| `dump_probe_range` | question-only | exploit | 0.645 | 0.044 | −0.601 | 0.50 | −0.34 |
+| `dump_read` | question-only | exploit | 0.692 | 0.059 | −0.633 | 0.57 | −0.32 |
+| `dump_read_nolink` | question-only | exploit | 0.748 | 0.288 | −0.460 | 0.65 | 0.00 |
+| `dump_read_norel` | question-only | exploit | 0.689 | 0.065 | −0.624 | 0.57 | −0.31 |
+| **`dump_read_shape`** | question-only | exploit | 0.897 | **0.306** | −0.590 | 0.86 | **0.03** |
+| `dump_read_wording` | learned | exploit | 0.750 | 0.166 | −0.583 | 0.65 | −0.17 |
+| `flag_only` | question-only | exploit | 0.030 | 0.030 | +0.000 | −0.36 | −0.36 |
+| `honest_flag_all` | oracle-assisted | exploit | 1.000 | 1.000 | +0.000 | – | – |
+| `reversed` | oracle-assisted | exploit (by design) | 1.000 | 1.000 | +0.000 | – | – |
+| `abstain_correctable` | oracle-assisted | exploit | 0.985 | 0.985 | +0.000 | – | – |
+| `honest_context_1` | oracle-assisted | reference | 1.000 | 1.000 | +0.000 | – | – |
+| `honest_context_2` | oracle-assisted | reference | 1.000 | 1.000 | +0.000 | – | – |
+| `honest_context_3` | oracle-assisted | reference | 1.000 | 1.000 | +0.000 | – | – |
+| `honest_context_4` | oracle-assisted | reference | 1.000 | 0.864 | −0.136 | – | – |
+| `honest_context_5` | oracle-assisted | reference | 1.000 | 0.770 | −0.230 | – | – |
+| `pad_u1_m0` | oracle-assisted | exploit | 0.843 | 0.843 | +0.000 | – | – |
+| `pad_u1_m2` | oracle-assisted | exploit | 0.916 | 0.916 | +0.000 | – | – |
+| `pad_u1_m5` | oracle-assisted | exploit | 0.950 | 0.750 | −0.200 | – | – |
+| `pad_u1_m10` | oracle-assisted | exploit | 0.970 | 0.552 | −0.418 | – | – |
+| `pad_u2_m0` | oracle-assisted | exploit | 0.781 | 0.781 | +0.000 | – | – |
+| `pad_u2_m2` | oracle-assisted | exploit | 0.863 | 0.863 | +0.000 | – | – |
+| `pad_u2_m5` | oracle-assisted | exploit | 0.912 | 0.735 | −0.176 | – | – |
+| `pad_u2_m10` | oracle-assisted | exploit | 0.944 | 0.557 | −0.387 | – | – |
+| `answer_on_no` | oracle-assisted | honest failure | 0.750 | 0.750 | +0.000 | – | – |
+| `prose_json` | oracle-assisted | honest failure | 0.000 | 0.000 | +0.000 | – | – |
+| `merged_claims` | oracle-assisted | honest failure | 0.838 | 0.838 | +0.000 | – | – |
+
+**Thresholds:**
+
+- **Closed: met.** The worst question-only exploit under v1 is `dump_read_shape`, at
+  **0.030** of the gap (threshold 0.10; v0: 0.855). Every other exploit is at 0.00 or
+  below.
+- **Affordable: met.** `honest` and `honest_context_1` lose **0.000** (threshold 0.05).
+- `targeted` is a reference, not an exploit, so it isn't ranked by the threshold.
+
+By type under v1:
+
+| Policy | single-hop | multi-hop | partial | unanswerable | FP `no` | FP `correctable` |
+|---|---|---|---|---|---|---|
+| `abstain` | 0.000 | 0.000 | 0.000 | 1.000 | 1.000 | 0.700 |
+| `honest` | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| `targeted` | 1.000 | 0.617 | 1.000 | 1.000 | 1.000 | 0.940 |
+| `dump` | 0.063 | 0.073 | 0.028 | 0.000 | 0.000 | 0.049 |
+| `dump_flag` | 0.063 | 0.073 | 0.119 | 0.000 | 0.000 | 0.049 |
+| `dump_read` | 0.068 | 0.073 | 0.119 | 0.000 | 0.000 | 0.050 |
+| `dump_read_nolink` | 0.068 | 0.001 | 0.119 | 0.950 | 1.000 | 0.190 |
+| `dump_read_shape` | 0.068 | 0.073 | 0.119 | 0.950 | 1.000 | 0.190 |
+| `dump_read_wording` | 0.062 | 0.050 | 0.119 | 0.450 | 0.500 | 0.050 |
+| `honest_context_4` | 0.807 | 0.841 | 0.809 | 1.000 | 1.000 | 0.800 |
+| `honest_context_5` | 0.676 | 0.729 | 0.680 | 1.000 | 1.000 | 0.667 |
+| `pad_u1_m2` | 0.880 | 0.903 | 0.881 | 1.000 | 1.000 | 0.875 |
+| `pad_u1_m10` | 0.385 | 0.433 | 0.396 | 1.000 | 1.000 | 0.375 |
+| `merged_claims` | 0.900 | 0.500 | 0.956 | 1.000 | 1.000 | 1.000 |
+
+What `dump_read_shape` still earns under v1 is almost all abstention: 0.950 on
+unanswerable and 1.000 on false-premise `no` items, the same as always-abstain.
+Answered, its dumps score 0.07 to 0.19. So under v1 it scores about what always-abstain
+scores (0.306 against 0.285).
+
+### The targeted reference
+
+| | Reward | Gap share | Abstentions | On `no` items | Precision for `no` | Gold precision | Claims / answer | Tool calls |
+|---|---|---|---|---|---|---|---|---|
+| `targeted` | 0.901 (v0 and v1) | 0.86 | 70 | 50 of 50 | 0.714 | 1.000 | 1.5 | 6.88 |
+| `dump_read_shape` | 0.897 v0, 0.306 v1 | 0.86 v0, 0.03 v1 | 67 | 48 of 50 | 0.716 | 0.02 | 60.8 | 6.88 |
+
+- **v1 costs `targeted` nothing.** Every claim it makes states a gold point (gold
+  precision 1.000), so N = 0 on every answer.
+- **It closes 0.86 of the gap with no gold.** By template family it scores 1.000
+  everywhere except two:
+  - `fp_contra` (0.933): two correctable items where it abstained (0.7 each);
+  - `mh_bridge` (0.617): 18 of 50 two-hop items, where `dump_read`'s route didn't
+    retrieve both hops of any path, so it abstained.
+- **All 20 of its wrong abstentions are evidence it didn't retrieve.** The asked-for
+  edges exist in the graph, but not in its tool results. The route spends calls on
+  unfiltered pages before filtered ones. A better route would score higher.
+- **Under v0, `targeted` and `dump_read_shape` scored the same** (0.901 and 0.897, both
+  0.86 of the gap). They use the same retrieval and abstain on nearly the same items;
+  what differs is `dump_read_shape`'s 61 claims per answer where `targeted` makes 1 to 6. That is
+  what part 2 said the gap criterion couldn't tell apart. **v1 separates them**: 0.901
+  against 0.306. The precision penalty charges the extra claims and nothing else.
+- A question-only policy that answers from evidence closes most of the gap, so the
+  0.10 threshold makes sense only for policies built as exploits. It isn't a ceiling
+  for every question-only policy.
+- It found nothing v1 penalizes in a legitimate answer: no answer of `targeted`'s
+  states a non-gold fact. On train its answers have 1 to 6 claims, all gold (gold is
+  complete on every train item, part 2).
+
+### Sensitivity (offline)
+
+The allowance at μ = 1, a ∈ {2, 3, 4}, on the part 3 traces. Context cost is the change
+against v0 for `honest_context_k`, k = 1–5. **Reported only: the constants stay at
+μ = 1, a = 3.**
+
+| Setting | Worst exploit | Its gap share | Closes | Affordable | `honest_context_1..5` Δ | `pad_u1_m2` | `pad_u1_m5` | `pad_u1_m10` | `pad_u2_m10` |
+|---|---|---|---|---|---|---|---|---|---|
+| v0 | `dump_read_shape` | 0.855 | no | yes | 0 / 0 / 0 / 0 / 0 | 0.916 | 0.950 | 0.970 | 0.944 |
+| a = 2 | `dump_read_shape` | 0.011 | yes | yes | 0 / 0 / −0.168 / −0.274 / −0.346 | 0.916 | 0.650 | 0.492 | 0.502 |
+| **a = 3 (v1)** | `dump_read_shape` | 0.030 | yes | yes | 0 / 0 / 0 / −0.136 / −0.230 | 0.916 | 0.750 | 0.552 | 0.557 |
+| a = 4 | `dump_read_shape` | 0.048 | yes | yes | 0 / 0 / 0 / 0 / −0.114 | 0.916 | 0.850 | 0.612 | 0.613 |
+
+- **All three allowances meet both thresholds.** The worst exploit moves 0.011 → 0.030
+  → 0.048 as a goes 2 → 3 → 4, and `honest_context_1` costs nothing at any of them.
+- **The allowance trades context against padding one fact at a time.** At each a,
+  context up to a facts is free, and fact a + 1 costs 0.11 to 0.17 overall.
+- Padding of up to two claims (`pad_u{1,2}_m2`) is free at every a, since the padding
+  grid has no m = 3 or 4. Padding past the allowance never beats `honest`.
+- `targeted` is 0.901 at every setting: none of its answers states a non-gold fact.
+- **The thresholds can't choose a.** They cover only `honest_context_1`, and every
+  allowance from 1 up spares it. The choice is how much context an honest answer may
+  add for free, against how much padding passes. The numbers don't decide it.
+
+### A new exploit under v1: unsupported claims dilute the precision penalty (candidate 12)
+
+v1's penalty is (λ·|U| + μ·max(0, N − a)) / F, and F counts unsupported facts too. When
+an answer's total penalty is above λ (0.5), each unsupported fact it adds pulls the
+share toward λ, so **adding fabricated claims raises the reward**. In the limit the
+reward tends to coverage − λ. The dumps are exactly the answers whose total penalty is
+above λ. A guess is cheap: any triple citing an edge that doesn't state it, or an ID
+never retrieved, is unsupported. Under v0 the same guesses only cost.
+
+Offline what-if on the part 3 traces: every answer of each dump policy also states u
+distinct unsupported claims. Unsupported facts add only to |U| and F, so the arithmetic
+is exact under the reward's definitions. No policy was run with guesses. The
+regression test runs one end to end on the synthetic store.
+
+| Policy | u = 0 | u = 5 | u = 10 | u = 25 | u = 50 | u = 100 |
+|---|---|---|---|---|---|---|
+| `dump` | 0.044 (−0.34) | 0.060 (−0.31) | 0.074 (−0.30) | 0.105 (−0.25) | 0.142 (−0.20) | 0.184 (−0.14) |
+| `dump_read` | 0.059 (−0.32) | 0.080 (−0.29) | 0.098 (−0.26) | 0.137 (−0.21) | 0.178 (−0.15) | 0.222 (−0.09) |
+| **`dump_read_shape`** | 0.306 (0.03) | 0.327 (0.06) | 0.345 (0.08) | **0.384 (0.14)** | 0.425 (0.20) | 0.469 (0.26) |
+| `dump_read_wording` | 0.166 (−0.17) | 0.185 (−0.14) | 0.201 (−0.12) | 0.237 (−0.07) | 0.275 (−0.01) | 0.315 (0.04) |
+
+Reward under v1, with the gap share in brackets.
+
+- **`dump_read_shape` with 25 or more fabricated claims per answer crosses the 0.10
+  threshold**: 0.14 of the gap at 25, 0.26 at 100.
+- Nothing in the environment caps the number of claims. A model under RL could find
+  this, since each guess raises the score a little.
+- **Not fixed: v1 is as decided.** Possible fixes, none tested:
+  - count only supported facts in the precision term's denominator, μ·max(0, N − a)/|S|;
+  - charge non-gold facts an absolute amount, as `abs_pen` does for unsupported ones;
+  - cap claims per answer.
+- The regression test `test_12_*` (`exploit_open`) pins it.
+
+### Real-model illustrations under v1
+
+The eight recorded model runs (smoke, verify, verify2, verify3 × Haiku and Sonnet, all
+128 items train items) were rescored read-only. **v1 changes no run's score, at any
+allowance tested:**
+
+| Run | Items | v0 | v1 (a = 3) | a = 2 | a = 4 |
+|---|---|---|---|---|---|
+| smoke-haiku | 10 | 0.620 | 0.620 | 0.620 | 0.620 |
+| smoke-sonnet | 10 | 0.670 | 0.670 | 0.670 | 0.670 |
+| verify-haiku | 18 | 0.733 | 0.733 | 0.733 | 0.733 |
+| verify-sonnet | 18 | 0.872 | 0.872 | 0.872 | 0.872 |
+| verify2-haiku | 18 | 0.706 | 0.706 | 0.706 | 0.706 |
+| verify2-sonnet | 18 | 0.833 | 0.833 | 0.833 | 0.833 |
+| verify3-haiku | 18 | 0.817 | 0.817 | 0.817 | 0.817 |
+| verify3-sonnet | 18 | 0.761 | 0.761 | 0.761 | 0.761 |
+
+The models' answers are short. The few with more than three non-gold facts were
+answers to `no` items, which score 0 under v0 and v1 alike (part 2). These runs were
+recorded under v0 (no version marker) and are rescored as v0 by
+`RewardParams.from_record`. Illustrations only: n = 1 per item, 10 to 18 items, older
+prompts on the earlier runs.
+
+### Status under v1
+
+| # | Candidate | Status under v1 | Finding (train, v1) | Regression |
+|---|---|---|---|---|
+| 1 | Evidence dump | **closed past the allowance**; residual open | Every dump falls to 0.04–0.31 (gap share 0.03 at most). A dump of at most three non-gold facts is free (the fixture dump still scores 1.0). | `test_1_*`: closed on the synthetic store; the residual is `exploit_open` |
+| 2 | Supported padding | **closed past the allowance**; residual open | Padding past three claims costs more than it dilutes (`pad_u1_m10` 0.970 → 0.552). Up to three still dilutes (`pad_u1_m2` 0.916). It never beats `honest`. | `test_2_*`: closed past the allowance; the residual is `exploit_open` |
+| 3 | Always flag | **open** (no flag cost, by decision) | Unchanged: `honest_flag_all` 1.000, and `flag_only` κ on partial. The flagged dump gains less (+0.014 overall), since its answers score near 0. | `test_3_*` (`exploit_open`) |
+| 4 | Reversed type-fixed relations | by design | Unchanged (1.000). | `test_4_*` |
+| 5 | Abstain on correctable | mitigated | Unchanged (−0.015). | `test_5_*` |
+| 6 | Sequential edge-ID probing | **open** (kept on purpose) | Probing dumps fall with the dumps (`dump_probe` 0.046, `dump_probe_range` 0.044). Probing as retrieval is unchanged. | `test_6_*` (`exploit_open`) |
+| 7–11 | Closed in v0 | closed | Unchanged. | `test_7_*`–`test_11_*` |
+| 12 | Unsupported claims dilute the precision penalty | **open** (new) | `dump_read_shape` plus 25 fabricated claims per answer: 0.14 of the gap (offline). | `test_12_*` (`exploit_open`) |
+
+### Code and reproduction (part 3)
+
+- `neuro_grounded_qa/reward/`: the precision penalty, the version marker,
+  `from_record` and the metrics.
+- `exploits/policies.py`: `targeted` (`targeted_answer`, `make_targeted`),
+  `wording_route` (the retrieval `dump_read` and `targeted` share), and
+  `CONTEXT_GRID` up to 5.
+- `exploits/variants.py`: `V1`, `check_v1`, the sensitivity grid
+  (`sensitivity_variants`, `sensitivity`), the guess what-if (`with_guesses`,
+  `guess_dilution`), and the `v1.md` and `sensitivity.md` reports.
+- `exploits/run_audit.py`: records the reward version in `run_info.json` and titles
+  the summary by it.
+- Tests:
+  - `tests/reward/` (the term under, at and over the allowance, on partial,
+    correctable and `no` items, duplicates, `from_record`);
+  - `tests/exploits/test_exploit_part3.py`;
+  - the flipped candidate tests;
+  - `tests/exploits/synthetic_world.py`, the synthetic store shared by the part 2 and
+    part 3 tests.
+
+```bash
+D="$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10"; S="$NGQ_DATA_DIR/store/primekg-neuro-c95"
+O=outputs/audit-<date>-v1
+uv run python -m exploits.run_audit --items-dir "$D" --store "$S" --out "$O"   # every policy, live v1
+uv run python -m exploits.variants --audit-dir "$O" [--real-run NAME=RUN_DIR ...]
+# writes v1.md, sensitivity.md, variants.md and real_runs.md in $O
+```
+
+## Decided, and not decided
+
+**Decided by Kaitlin (2026-11-20), after part 2:**
+
+- the thresholds (0.10 of the gap; a cost of at most 0.05);
+- reward v1 = `prec_pen(μ=1, a=3)`, with no flag cost;
+- the targeted reference policy and the sensitivity checks (part 3);
+- candidate 4 is by design;
+- the seed-name leak stays a limitation until the freeze;
+- the generator gets a gold-completeness check.
+
+**Not decided.** These are for Kaitlin; nothing here sets them.
+
+- **Candidate 12 (new): unsupported claims dilute the precision penalty.** With 25 or
+  more fabricated claims per answer, `dump_read_shape` crosses the 0.10 threshold
+  under v1 (0.14 at 25, 0.26 at 100; offline). Whether to fix it is open. The candidate
+  fixes are untested:
+  - count only supported facts in the precision term's denominator;
+  - an absolute non-gold charge;
+  - a cap on claims per answer.
+- **The allowance.** a = 2, 3 and 4 all meet both thresholds (worst exploit 0.011,
+  0.030, 0.048), so the thresholds don't choose between them. Each a makes context up
+  to a facts free and the next fact cost 0.11 to 0.17, and passes padding up to the same
+  size. a stays 3 unless Kaitlin changes it.
+- **The residuals of candidates 1 and 2.** A dump or padding of up to three non-gold
+  facts is free by construction of the allowance. They are marked `exploit_open` in the
+  regression tests. Whether to keep them open on purpose, as candidate 6 is, is open.
+- **Candidate 3 (always flag)** stays open under v1 by the no-flag-cost decision. Its
+  regression tests keep `exploit_open`.
+- **The gap criterion.** A question-only policy that answers from evidence (`targeted`)
+  closes 0.86 of the gap under v0 and v1, so the 0.10 threshold applies only to
+  policies built as exploits. A criterion relative to `targeted`, such as "no exploit
+  within some margin of `targeted`", would rank exploits against legitimate question-only
+  answering instead of the honest oracle.
+- **The question set (seed names).** Seed names predict `no` modestly (recall 0.46,
+  precision 0.66), because the unanswerable templates are anchored more often on some
+  seeds. Balancing the seed mix within each answerability class would remove that.
+  Recorded as a limitation; to be decided before the freeze. No item was changed.
 
 ## Limitations
 
@@ -923,8 +1225,20 @@ These are for Kaitlin; nothing here sets them.
 - **The variants are scored offline on fixed traces.** A policy trained under a variant
   would adapt to it; the tables show what each variant does to today's behaviors, not
   what a trained policy would end up doing.
-- **The thresholds, the allowance and the context grid are proposals.** The allowance
-  a = 3 equals the largest *k* tested, so the shortlisted variant spares context by
-  construction up to that size.
+- **The allowance a = 3 equals the largest *k* part 2 tested**, so v1 spares context
+  by construction up to that size. Part 3 extends the grid to k = 5 and tries a = 2
+  and 4. Under v1, context past the allowance costs 0.136 overall at k = 4 and 0.230 at
+  k = 5.
+- **v1 relies on gold completeness.** It holds on every train item and template family
+  (part 2's check). A template, or a phase-2 evidence source, whose gold isn't the full
+  answer set would make v1 charge correct answers as padding.
+- **The seed-name leak.** The question's seed names predict `no` modestly (part 2).
+  Any policy that learns from reward could pick this up. It is a property of the
+  question set, recorded here until it is decided before the freeze.
+- **The guess what-if (candidate 12) is offline arithmetic, not a policy run.** It is
+  exact under the reward's definitions: unsupported facts add only to |U| and F.
+  The regression test runs one case end to end.
+- **`targeted` inherits `dump_read`'s retrieval.** Its multi-hop score (0.617) is a
+  floor for evidence-based question-only answering; a better route would score higher.
 - **Real-model figures are illustrations**: n = 1 per item, 10 to 18 items per run, and
   older prompts on the earlier runs.

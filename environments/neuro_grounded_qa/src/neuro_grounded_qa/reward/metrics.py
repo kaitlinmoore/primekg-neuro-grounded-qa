@@ -47,6 +47,13 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
     - ``citations_per_claim``: mean distinct cites per claim (when there are claims).
     - ``supported_facts``, ``unsupported_facts``: |S| and |U|, counted in distinct
       facts after deduplication.
+    - ``nongold_supported_facts``: N, supported distinct facts that state no gold
+      point (on ``no`` items, every supported fact).
+    - ``nongold_over_allowance``: ``max(0, N − a)``, the non-gold facts the precision
+      penalty charges for. 0 while an answer stays within the allowance.
+    - ``precision_penalty``: ``μ · max(0, N − a) / F`` (reward v1; 0 under v0). Like
+      ``unsupported_penalty`` it is recorded on every answer, though the aggregate
+      uses neither on ``no`` items.
     - ``duplicate_claims``: claims removed by deduplication (claims stating the same
       fact as an earlier claim; reversed restatements count unless the relation is
       directed).
@@ -81,6 +88,9 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
     out["claims"] = float(b.n_claims)
     out["supported_facts"] = float(b.n_supported)
     out["unsupported_facts"] = float(b.n_unsupported)
+    out["nongold_supported_facts"] = float(b.n_nongold_supported)
+    out["nongold_over_allowance"] = float(b.nongold_over_allowance)
+    out["precision_penalty"] = b.precision_penalty
     if b.n_claims:
         out["citations_per_claim"] = (
             sum(len(c.valid_cites) + len(c.stripped_cites) for c in b.claims) / b.n_claims
