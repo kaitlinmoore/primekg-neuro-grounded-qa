@@ -169,6 +169,10 @@ class QuestionItem(vf.TaskData):
     question. ``extra="forbid"`` is added so a misspelled field in an items file fails
     loudly instead of being dropped.
 
+    ``build_id`` binds the item to the store build it was generated from: its
+    evidence IDs name edges of that build only. It is required and non-blank; the
+    taskset checks it against the store's ``build_id`` before any rollout.
+
     Validators enforce the label rules the reward relies on:
 
     - ``qtype`` and ``answerable`` agree (``QTYPE_ANSWERABLE``).
@@ -214,11 +218,22 @@ class QuestionItem(vf.TaskData):
     graph_gaps: list[GraphGap] = Field(default_factory=list)
     """The parts of the question the graph can't support; non-empty for
     ``answerable="partial"``, empty otherwise."""
+    build_id: str = Field(min_length=1)
+    """The ``build_id`` of the evidence store whose ``E:`` IDs this item cites
+    (``EvidenceStore.build_id``). Evidence IDs are only meaningful within one build,
+    so the taskset refuses to pair an item with a store of a different build."""
     source: ItemSource
     split: Split
     template_id: str | None = None
     """The generating template, for templated items; None for hand-written ones."""
     notes: str = ""
+
+    @field_validator("build_id")
+    @classmethod
+    def _build_id_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("build_id must not be blank")
+        return v
 
     @model_validator(mode="after")
     def _labels_consistent(self) -> QuestionItem:
