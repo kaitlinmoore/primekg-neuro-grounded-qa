@@ -1,0 +1,1607 @@
+{
+ "_comment": "Synthetic world for the question-set generator tests (tests/data/test_question_set.py). Built once by a seeded script; names are unique tokens so outputs can be scanned for them. 'store_edges' are (subject, relation, display_relation, object, directed); hierarchy edges are child -> parent. One seed has a grouped (group:) ID. 'full_only_edges' are (subject, relation, object, directed); they and 'full_only_nodes' exist only in the full graph: the HPO root 'Mode of inheritance' (source_id 5) above P_INH (edges child first, like the store), and one disease_protein fact the subgraph cut.",
+ "build_id": "fixture-qgen-world-v1",
+ "seeds": [
+  {
+   "id": "S_AD1",
+   "name": "Synthdisease Alzheimer Alpha",
+   "group": "AD"
+  },
+  {
+   "id": "S_AD2",
+   "name": "Synthdisease Alzheimer Beta",
+   "group": "AD"
+  },
+  {
+   "id": "group:synthdisease_parkinson_alpha",
+   "name": "Synthdisease Parkinson Alpha",
+   "group": "PD"
+  },
+  {
+   "id": "S_PD2",
+   "name": "Synthdisease Parkinson Beta",
+   "group": "PD"
+  },
+  {
+   "id": "S_ALS",
+   "name": "Synthdisease Sclerosis",
+   "group": "ALS"
+  },
+  {
+   "id": "S_FTD",
+   "name": "Synthdisease Frontal",
+   "group": "FTD"
+  },
+  {
+   "id": "S_FA",
+   "name": "Synthdisease Frontal Motor",
+   "group": "FTD/ALS"
+  },
+  {
+   "id": "S_HD",
+   "name": "Synthdisease Huntington",
+   "group": "HD"
+  },
+  {
+   "id": "S_DLB",
+   "name": "Synthdisease Lewy",
+   "group": "DLB"
+  }
+ ],
+ "entities": [
+  {
+   "id": "S_AD1",
+   "name": "Synthdisease Alzheimer Alpha",
+   "type": "disease",
+   "primekg_index": "n1",
+   "source": "MONDO",
+   "source_id": "S_AD1"
+  },
+  {
+   "id": "S_AD2",
+   "name": "Synthdisease Alzheimer Beta",
+   "type": "disease",
+   "primekg_index": "n2",
+   "source": "MONDO",
+   "source_id": "S_AD2"
+  },
+  {
+   "id": "group:synthdisease_parkinson_alpha",
+   "name": "Synthdisease Parkinson Alpha",
+   "type": "disease",
+   "primekg_index": "n3",
+   "source": "MONDO",
+   "source_id": "group:synthdisease_parkinson_alpha"
+  },
+  {
+   "id": "S_PD2",
+   "name": "Synthdisease Parkinson Beta",
+   "type": "disease",
+   "primekg_index": "n4",
+   "source": "MONDO",
+   "source_id": "S_PD2"
+  },
+  {
+   "id": "S_ALS",
+   "name": "Synthdisease Sclerosis",
+   "type": "disease",
+   "primekg_index": "n5",
+   "source": "MONDO",
+   "source_id": "S_ALS"
+  },
+  {
+   "id": "S_FTD",
+   "name": "Synthdisease Frontal",
+   "type": "disease",
+   "primekg_index": "n6",
+   "source": "MONDO",
+   "source_id": "S_FTD"
+  },
+  {
+   "id": "S_FA",
+   "name": "Synthdisease Frontal Motor",
+   "type": "disease",
+   "primekg_index": "n7",
+   "source": "MONDO",
+   "source_id": "S_FA"
+  },
+  {
+   "id": "S_HD",
+   "name": "Synthdisease Huntington",
+   "type": "disease",
+   "primekg_index": "n8",
+   "source": "MONDO",
+   "source_id": "S_HD"
+  },
+  {
+   "id": "S_DLB",
+   "name": "Synthdisease Lewy",
+   "type": "disease",
+   "primekg_index": "n9",
+   "source": "MONDO",
+   "source_id": "S_DLB"
+  },
+  {
+   "id": "D_01",
+   "name": "Synthcondition Rho",
+   "type": "disease",
+   "primekg_index": "n10",
+   "source": "MONDO",
+   "source_id": "D_01"
+  },
+  {
+   "id": "D_02",
+   "name": "Synthcondition Sigma",
+   "type": "disease",
+   "primekg_index": "n11",
+   "source": "MONDO",
+   "source_id": "D_02"
+  },
+  {
+   "id": "D_03",
+   "name": "Synthcondition Tau",
+   "type": "disease",
+   "primekg_index": "n12",
+   "source": "MONDO",
+   "source_id": "D_03"
+  },
+  {
+   "id": "D_04",
+   "name": "Synthcondition Upsilon",
+   "type": "disease",
+   "primekg_index": "n13",
+   "source": "MONDO",
+   "source_id": "D_04"
+  },
+  {
+   "id": "D_05",
+   "name": "Synthcondition Phi",
+   "type": "disease",
+   "primekg_index": "n14",
+   "source": "MONDO",
+   "source_id": "D_05"
+  },
+  {
+   "id": "D_06",
+   "name": "Synthcondition Chi",
+   "type": "disease",
+   "primekg_index": "n15",
+   "source": "MONDO",
+   "source_id": "D_06"
+  },
+  {
+   "id": "G_01",
+   "name": "Synthgene Ace",
+   "type": "gene/protein",
+   "primekg_index": "n16",
+   "source": "NCBI",
+   "source_id": "G_01"
+  },
+  {
+   "id": "G_02",
+   "name": "Synthgene Bex",
+   "type": "gene/protein",
+   "primekg_index": "n17",
+   "source": "NCBI",
+   "source_id": "G_02"
+  },
+  {
+   "id": "G_03",
+   "name": "Synthgene Cor",
+   "type": "gene/protein",
+   "primekg_index": "n18",
+   "source": "NCBI",
+   "source_id": "G_03"
+  },
+  {
+   "id": "G_04",
+   "name": "Synthgene Dun",
+   "type": "gene/protein",
+   "primekg_index": "n19",
+   "source": "NCBI",
+   "source_id": "G_04"
+  },
+  {
+   "id": "G_05",
+   "name": "Synthgene Eff",
+   "type": "gene/protein",
+   "primekg_index": "n20",
+   "source": "NCBI",
+   "source_id": "G_05"
+  },
+  {
+   "id": "G_06",
+   "name": "Synthgene Fyl",
+   "type": "gene/protein",
+   "primekg_index": "n21",
+   "source": "NCBI",
+   "source_id": "G_06"
+  },
+  {
+   "id": "G_07",
+   "name": "Synthgene Gor",
+   "type": "gene/protein",
+   "primekg_index": "n22",
+   "source": "NCBI",
+   "source_id": "G_07"
+  },
+  {
+   "id": "G_08",
+   "name": "Synthgene Hux",
+   "type": "gene/protein",
+   "primekg_index": "n23",
+   "source": "NCBI",
+   "source_id": "G_08"
+  },
+  {
+   "id": "G_09",
+   "name": "Synthgene Ilm",
+   "type": "gene/protein",
+   "primekg_index": "n24",
+   "source": "NCBI",
+   "source_id": "G_09"
+  },
+  {
+   "id": "G_10",
+   "name": "Synthgene Jot",
+   "type": "gene/protein",
+   "primekg_index": "n25",
+   "source": "NCBI",
+   "source_id": "G_10"
+  },
+  {
+   "id": "G_11",
+   "name": "Synthgene Kep",
+   "type": "gene/protein",
+   "primekg_index": "n26",
+   "source": "NCBI",
+   "source_id": "G_11"
+  },
+  {
+   "id": "G_12",
+   "name": "Synthgene Lom",
+   "type": "gene/protein",
+   "primekg_index": "n27",
+   "source": "NCBI",
+   "source_id": "G_12"
+  },
+  {
+   "id": "G_13",
+   "name": "Synthgene Mur",
+   "type": "gene/protein",
+   "primekg_index": "n28",
+   "source": "NCBI",
+   "source_id": "G_13"
+  },
+  {
+   "id": "G_14",
+   "name": "Synthgene Nix",
+   "type": "gene/protein",
+   "primekg_index": "n29",
+   "source": "NCBI",
+   "source_id": "G_14"
+  },
+  {
+   "id": "G_15",
+   "name": "Synthgene Opa",
+   "type": "gene/protein",
+   "primekg_index": "n30",
+   "source": "NCBI",
+   "source_id": "G_15"
+  },
+  {
+   "id": "G_16",
+   "name": "Synthgene Pyr",
+   "type": "gene/protein",
+   "primekg_index": "n31",
+   "source": "NCBI",
+   "source_id": "G_16"
+  },
+  {
+   "id": "G_17",
+   "name": "Synthgene Qua",
+   "type": "gene/protein",
+   "primekg_index": "n32",
+   "source": "NCBI",
+   "source_id": "G_17"
+  },
+  {
+   "id": "G_18",
+   "name": "Synthgene Rel",
+   "type": "gene/protein",
+   "primekg_index": "n33",
+   "source": "NCBI",
+   "source_id": "G_18"
+  },
+  {
+   "id": "G_19",
+   "name": "Synthgene Sto",
+   "type": "gene/protein",
+   "primekg_index": "n34",
+   "source": "NCBI",
+   "source_id": "G_19"
+  },
+  {
+   "id": "G_20",
+   "name": "Synthgene Tup",
+   "type": "gene/protein",
+   "primekg_index": "n35",
+   "source": "NCBI",
+   "source_id": "G_20"
+  },
+  {
+   "id": "P_01",
+   "name": "Synthpheno Amber",
+   "type": "effect/phenotype",
+   "primekg_index": "n36",
+   "source": "HPO",
+   "source_id": "101"
+  },
+  {
+   "id": "P_02",
+   "name": "Synthpheno Brick",
+   "type": "effect/phenotype",
+   "primekg_index": "n37",
+   "source": "HPO",
+   "source_id": "102"
+  },
+  {
+   "id": "P_03",
+   "name": "Synthpheno Coral",
+   "type": "effect/phenotype",
+   "primekg_index": "n38",
+   "source": "HPO",
+   "source_id": "103"
+  },
+  {
+   "id": "P_04",
+   "name": "Synthpheno Denim",
+   "type": "effect/phenotype",
+   "primekg_index": "n39",
+   "source": "HPO",
+   "source_id": "104"
+  },
+  {
+   "id": "P_05",
+   "name": "Synthpheno Ebony",
+   "type": "effect/phenotype",
+   "primekg_index": "n40",
+   "source": "HPO",
+   "source_id": "105"
+  },
+  {
+   "id": "P_06",
+   "name": "Synthpheno Flint",
+   "type": "effect/phenotype",
+   "primekg_index": "n41",
+   "source": "HPO",
+   "source_id": "106"
+  },
+  {
+   "id": "P_07",
+   "name": "Synthpheno Grape",
+   "type": "effect/phenotype",
+   "primekg_index": "n42",
+   "source": "HPO",
+   "source_id": "107"
+  },
+  {
+   "id": "P_08",
+   "name": "Synthpheno Hazel",
+   "type": "effect/phenotype",
+   "primekg_index": "n43",
+   "source": "HPO",
+   "source_id": "108"
+  },
+  {
+   "id": "P_09",
+   "name": "Synthpheno Ivory",
+   "type": "effect/phenotype",
+   "primekg_index": "n44",
+   "source": "HPO",
+   "source_id": "109"
+  },
+  {
+   "id": "P_10",
+   "name": "Synthpheno Jade",
+   "type": "effect/phenotype",
+   "primekg_index": "n45",
+   "source": "HPO",
+   "source_id": "110"
+  },
+  {
+   "id": "P_INH",
+   "name": "Synthpheno dominant inheritance",
+   "type": "effect/phenotype",
+   "primekg_index": "n46",
+   "source": "HPO",
+   "source_id": "6"
+  },
+  {
+   "id": "D_SH",
+   "name": "Synthshared condition",
+   "type": "disease",
+   "primekg_index": "n47",
+   "source": "MONDO",
+   "source_id": "D_SH"
+  },
+  {
+   "id": "P_SH",
+   "name": "Synthshared condition",
+   "type": "effect/phenotype",
+   "primekg_index": "n48",
+   "source": "HPO",
+   "source_id": "777"
+  },
+  {
+   "id": "X_1",
+   "name": "Synthdrug Ara",
+   "type": "drug",
+   "primekg_index": "n49",
+   "source": "DrugBank",
+   "source_id": "X_1"
+  },
+  {
+   "id": "X_2",
+   "name": "Synthdrug Bel",
+   "type": "drug",
+   "primekg_index": "n50",
+   "source": "DrugBank",
+   "source_id": "X_2"
+  },
+  {
+   "id": "X_3",
+   "name": "Synthdrug Cyr",
+   "type": "drug",
+   "primekg_index": "n51",
+   "source": "DrugBank",
+   "source_id": "X_3"
+  },
+  {
+   "id": "X_4",
+   "name": "Synthdrug Dax",
+   "type": "drug",
+   "primekg_index": "n52",
+   "source": "DrugBank",
+   "source_id": "X_4"
+  },
+  {
+   "id": "X_5",
+   "name": "Synthdrug Eon",
+   "type": "drug",
+   "primekg_index": "n53",
+   "source": "DrugBank",
+   "source_id": "X_5"
+  },
+  {
+   "id": "X_6",
+   "name": "Synthdrug Fio",
+   "type": "drug",
+   "primekg_index": "n54",
+   "source": "DrugBank",
+   "source_id": "X_6"
+  },
+  {
+   "id": "EX_1",
+   "name": "Synthexposure Smoke",
+   "type": "exposure",
+   "primekg_index": "n55",
+   "source": "CTD",
+   "source_id": "EX_1"
+  },
+  {
+   "id": "EX_2",
+   "name": "Synthexposure Lead",
+   "type": "exposure",
+   "primekg_index": "n56",
+   "source": "CTD",
+   "source_id": "EX_2"
+  },
+  {
+   "id": "EX_3",
+   "name": "Synthexposure Dust",
+   "type": "exposure",
+   "primekg_index": "n57",
+   "source": "CTD",
+   "source_id": "EX_3"
+  },
+  {
+   "id": "PW_1",
+   "name": "Synthpathway North",
+   "type": "pathway",
+   "primekg_index": "n58",
+   "source": "REACTOME",
+   "source_id": "PW_1"
+  },
+  {
+   "id": "PW_2",
+   "name": "Synthpathway South",
+   "type": "pathway",
+   "primekg_index": "n59",
+   "source": "REACTOME",
+   "source_id": "PW_2"
+  }
+ ],
+ "store_edges": [
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_17",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_07",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_01",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_09",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_15",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_protein",
+   "associated with",
+   "G_06",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_05",
+   false
+  ],
+  [
+   "EX_2",
+   "exposure_disease",
+   "linked to",
+   "S_AD1",
+   false
+  ],
+  [
+   "S_AD2",
+   "disease_protein",
+   "associated with",
+   "G_20",
+   false
+  ],
+  [
+   "S_AD2",
+   "disease_protein",
+   "associated with",
+   "G_16",
+   false
+  ],
+  [
+   "S_AD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_05",
+   false
+  ],
+  [
+   "S_AD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_09",
+   false
+  ],
+  [
+   "S_AD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_04",
+   false
+  ],
+  [
+   "X_2",
+   "indication",
+   "indication",
+   "S_AD2",
+   false
+  ],
+  [
+   "X_2",
+   "contraindication",
+   "contraindication",
+   "S_AD2",
+   false
+  ],
+  [
+   "EX_1",
+   "exposure_disease",
+   "linked to",
+   "S_AD2",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_protein",
+   "associated with",
+   "G_05",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_protein",
+   "associated with",
+   "G_18",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_04",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_10",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_05",
+   false
+  ],
+  [
+   "X_5",
+   "indication",
+   "indication",
+   "group:synthdisease_parkinson_alpha",
+   false
+  ],
+  [
+   "X_2",
+   "indication",
+   "indication",
+   "group:synthdisease_parkinson_alpha",
+   false
+  ],
+  [
+   "X_1",
+   "contraindication",
+   "contraindication",
+   "group:synthdisease_parkinson_alpha",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_08",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_12",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_01",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_03",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_04",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_20",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_17",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_protein",
+   "associated with",
+   "G_07",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_01",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_08",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_05",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_10",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_09",
+   false
+  ],
+  [
+   "X_6",
+   "indication",
+   "indication",
+   "S_PD2",
+   false
+  ],
+  [
+   "EX_2",
+   "exposure_disease",
+   "linked to",
+   "S_PD2",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_protein",
+   "associated with",
+   "G_14",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_protein",
+   "associated with",
+   "G_16",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_protein",
+   "associated with",
+   "G_06",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_01",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_06",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_02",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_09",
+   false
+  ],
+  [
+   "S_ALS",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_04",
+   false
+  ],
+  [
+   "X_2",
+   "indication",
+   "indication",
+   "S_ALS",
+   false
+  ],
+  [
+   "X_3",
+   "indication",
+   "indication",
+   "S_ALS",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_17",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_16",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_14",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_09",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_15",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_protein",
+   "associated with",
+   "G_08",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_05",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_06",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_09",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_04",
+   false
+  ],
+  [
+   "S_FTD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_10",
+   false
+  ],
+  [
+   "X_2",
+   "contraindication",
+   "contraindication",
+   "S_FTD",
+   false
+  ],
+  [
+   "S_FA",
+   "disease_protein",
+   "associated with",
+   "G_19",
+   false
+  ],
+  [
+   "S_FA",
+   "disease_protein",
+   "associated with",
+   "G_18",
+   false
+  ],
+  [
+   "S_FA",
+   "disease_protein",
+   "associated with",
+   "G_11",
+   false
+  ],
+  [
+   "S_FA",
+   "disease_protein",
+   "associated with",
+   "G_02",
+   false
+  ],
+  [
+   "S_FA",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_08",
+   false
+  ],
+  [
+   "X_5",
+   "indication",
+   "indication",
+   "S_FA",
+   false
+  ],
+  [
+   "X_6",
+   "indication",
+   "indication",
+   "S_FA",
+   false
+  ],
+  [
+   "S_HD",
+   "disease_protein",
+   "associated with",
+   "G_18",
+   false
+  ],
+  [
+   "S_HD",
+   "disease_protein",
+   "associated with",
+   "G_15",
+   false
+  ],
+  [
+   "S_HD",
+   "disease_protein",
+   "associated with",
+   "G_06",
+   false
+  ],
+  [
+   "S_HD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_07",
+   false
+  ],
+  [
+   "X_5",
+   "indication",
+   "indication",
+   "S_HD",
+   false
+  ],
+  [
+   "X_3",
+   "contraindication",
+   "contraindication",
+   "S_HD",
+   false
+  ],
+  [
+   "EX_1",
+   "exposure_disease",
+   "linked to",
+   "S_HD",
+   false
+  ],
+  [
+   "S_DLB",
+   "disease_protein",
+   "associated with",
+   "G_04",
+   false
+  ],
+  [
+   "S_DLB",
+   "disease_protein",
+   "associated with",
+   "G_03",
+   false
+  ],
+  [
+   "S_DLB",
+   "disease_protein",
+   "associated with",
+   "G_15",
+   false
+  ],
+  [
+   "S_DLB",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_10",
+   false
+  ],
+  [
+   "X_4",
+   "indication",
+   "indication",
+   "S_DLB",
+   false
+  ],
+  [
+   "X_5",
+   "contraindication",
+   "contraindication",
+   "S_DLB",
+   false
+  ],
+  [
+   "EX_1",
+   "exposure_disease",
+   "linked to",
+   "S_DLB",
+   false
+  ],
+  [
+   "S_AD1",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_INH",
+   false
+  ],
+  [
+   "group:synthdisease_parkinson_alpha",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_INH",
+   false
+  ],
+  [
+   "S_HD",
+   "disease_phenotype_positive",
+   "phenotype present",
+   "P_SH",
+   false
+  ],
+  [
+   "S_DLB",
+   "disease_phenotype_negative",
+   "phenotype absent",
+   "P_03",
+   false
+  ],
+  [
+   "S_PD2",
+   "disease_phenotype_negative",
+   "phenotype absent",
+   "P_05",
+   false
+  ],
+  [
+   "D_01",
+   "disease_disease",
+   "parent-child",
+   "S_AD1",
+   true
+  ],
+  [
+   "D_02",
+   "disease_disease",
+   "parent-child",
+   "group:synthdisease_parkinson_alpha",
+   true
+  ],
+  [
+   "S_AD2",
+   "disease_disease",
+   "parent-child",
+   "D_03",
+   true
+  ],
+  [
+   "D_SH",
+   "disease_disease",
+   "parent-child",
+   "S_HD",
+   true
+  ],
+  [
+   "D_04",
+   "disease_disease",
+   "parent-child",
+   "S_FTD",
+   true
+  ],
+  [
+   "S_FA",
+   "disease_disease",
+   "parent-child",
+   "D_05",
+   true
+  ],
+  [
+   "D_06",
+   "disease_disease",
+   "parent-child",
+   "S_ALS",
+   true
+  ],
+  [
+   "D_01",
+   "disease_protein",
+   "associated with",
+   "G_15",
+   false
+  ],
+  [
+   "D_01",
+   "disease_protein",
+   "associated with",
+   "G_02",
+   false
+  ],
+  [
+   "D_02",
+   "disease_protein",
+   "associated with",
+   "G_04",
+   false
+  ],
+  [
+   "D_02",
+   "disease_protein",
+   "associated with",
+   "G_06",
+   false
+  ],
+  [
+   "D_03",
+   "disease_protein",
+   "associated with",
+   "G_04",
+   false
+  ],
+  [
+   "D_03",
+   "disease_protein",
+   "associated with",
+   "G_11",
+   false
+  ],
+  [
+   "D_04",
+   "disease_protein",
+   "associated with",
+   "G_16",
+   false
+  ],
+  [
+   "D_04",
+   "disease_protein",
+   "associated with",
+   "G_13",
+   false
+  ],
+  [
+   "G_17",
+   "protein_protein",
+   "ppi",
+   "G_01",
+   false
+  ],
+  [
+   "G_01",
+   "protein_protein",
+   "ppi",
+   "G_16",
+   false
+  ],
+  [
+   "G_20",
+   "protein_protein",
+   "ppi",
+   "G_19",
+   false
+  ],
+  [
+   "G_08",
+   "protein_protein",
+   "ppi",
+   "G_01",
+   false
+  ],
+  [
+   "G_14",
+   "protein_protein",
+   "ppi",
+   "G_08",
+   false
+  ],
+  [
+   "G_02",
+   "protein_protein",
+   "ppi",
+   "G_16",
+   false
+  ],
+  [
+   "G_02",
+   "protein_protein",
+   "ppi",
+   "G_10",
+   false
+  ],
+  [
+   "G_02",
+   "protein_protein",
+   "ppi",
+   "G_19",
+   false
+  ],
+  [
+   "G_12",
+   "protein_protein",
+   "ppi",
+   "G_10",
+   false
+  ],
+  [
+   "G_02",
+   "protein_protein",
+   "ppi",
+   "G_12",
+   false
+  ],
+  [
+   "G_11",
+   "protein_protein",
+   "ppi",
+   "G_13",
+   false
+  ],
+  [
+   "G_14",
+   "protein_protein",
+   "ppi",
+   "G_16",
+   false
+  ],
+  [
+   "G_05",
+   "protein_protein",
+   "ppi",
+   "G_08",
+   false
+  ],
+  [
+   "G_08",
+   "protein_protein",
+   "ppi",
+   "G_17",
+   false
+  ],
+  [
+   "G_15",
+   "protein_protein",
+   "ppi",
+   "G_13",
+   false
+  ],
+  [
+   "G_07",
+   "protein_protein",
+   "ppi",
+   "G_15",
+   false
+  ],
+  [
+   "G_02",
+   "protein_protein",
+   "ppi",
+   "G_08",
+   false
+  ],
+  [
+   "G_09",
+   "protein_protein",
+   "ppi",
+   "G_06",
+   false
+  ],
+  [
+   "G_18",
+   "protein_protein",
+   "ppi",
+   "G_10",
+   false
+  ],
+  [
+   "G_07",
+   "protein_protein",
+   "ppi",
+   "G_08",
+   false
+  ],
+  [
+   "G_16",
+   "protein_protein",
+   "ppi",
+   "G_07",
+   false
+  ],
+  [
+   "G_16",
+   "protein_protein",
+   "ppi",
+   "G_08",
+   false
+  ],
+  [
+   "G_11",
+   "protein_protein",
+   "ppi",
+   "G_10",
+   false
+  ],
+  [
+   "X_1",
+   "drug_protein/target",
+   "target",
+   "G_13",
+   false
+  ],
+  [
+   "X_1",
+   "drug_protein/target",
+   "target",
+   "G_05",
+   false
+  ],
+  [
+   "X_2",
+   "drug_protein/target",
+   "target",
+   "G_18",
+   false
+  ],
+  [
+   "X_2",
+   "drug_protein/target",
+   "target",
+   "G_04",
+   false
+  ],
+  [
+   "X_3",
+   "drug_protein/target",
+   "target",
+   "G_16",
+   false
+  ],
+  [
+   "X_3",
+   "drug_protein/target",
+   "target",
+   "G_02",
+   false
+  ],
+  [
+   "X_4",
+   "drug_protein/target",
+   "target",
+   "G_08",
+   false
+  ],
+  [
+   "X_4",
+   "drug_protein/target",
+   "target",
+   "G_15",
+   false
+  ],
+  [
+   "X_5",
+   "drug_protein/target",
+   "target",
+   "G_15",
+   false
+  ],
+  [
+   "X_5",
+   "drug_protein/target",
+   "target",
+   "G_05",
+   false
+  ],
+  [
+   "X_6",
+   "drug_protein/target",
+   "target",
+   "G_06",
+   false
+  ],
+  [
+   "X_6",
+   "drug_protein/target",
+   "target",
+   "G_19",
+   false
+  ],
+  [
+   "PW_1",
+   "pathway_protein",
+   "interacts with",
+   "G_11",
+   false
+  ],
+  [
+   "PW_1",
+   "pathway_protein",
+   "interacts with",
+   "G_07",
+   false
+  ],
+  [
+   "PW_1",
+   "pathway_protein",
+   "interacts with",
+   "G_08",
+   false
+  ],
+  [
+   "PW_2",
+   "pathway_protein",
+   "interacts with",
+   "G_03",
+   false
+  ],
+  [
+   "PW_2",
+   "pathway_protein",
+   "interacts with",
+   "G_10",
+   false
+  ],
+  [
+   "PW_2",
+   "pathway_protein",
+   "interacts with",
+   "G_09",
+   false
+  ],
+  [
+   "EX_1",
+   "exposure_protein",
+   "interacts with",
+   "G_01",
+   false
+  ],
+  [
+   "EX_1",
+   "exposure_protein",
+   "interacts with",
+   "G_15",
+   false
+  ],
+  [
+   "EX_2",
+   "exposure_protein",
+   "interacts with",
+   "G_17",
+   false
+  ],
+  [
+   "EX_2",
+   "exposure_protein",
+   "interacts with",
+   "G_15",
+   false
+  ],
+  [
+   "EX_3",
+   "exposure_protein",
+   "interacts with",
+   "G_16",
+   false
+  ],
+  [
+   "EX_3",
+   "exposure_protein",
+   "interacts with",
+   "G_19",
+   false
+  ],
+  [
+   "P_02",
+   "phenotype_phenotype",
+   "parent-child",
+   "P_01",
+   true
+  ],
+  [
+   "P_04",
+   "phenotype_phenotype",
+   "parent-child",
+   "P_03",
+   true
+  ]
+ ],
+ "full_only_nodes": [
+  {
+   "primekg_index": "n_root5",
+   "type": "effect/phenotype",
+   "name": "Mode of inheritance",
+   "source": "HPO",
+   "source_id": "5"
+  }
+ ],
+ "full_only_edges": [
+  [
+   "P_INH",
+   "phenotype_phenotype",
+   "n_root5",
+   true
+  ],
+  [
+   "S_DLB",
+   "disease_protein",
+   "G_01",
+   false
+  ]
+ ]
+}
