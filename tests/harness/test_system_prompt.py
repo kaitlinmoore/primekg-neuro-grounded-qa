@@ -8,7 +8,7 @@ import re
 
 from mcp.server.mcpserver import MCPServer
 
-from harness.helpers import make_toolset, run
+from harness.helpers import ITEMS_PATH, make_toolset, run
 from neuro_grounded_qa.contracts import (
     Abstain,
     Answer,
@@ -17,7 +17,8 @@ from neuro_grounded_qa.contracts import (
     ParseFailure,
     parse_output,
 )
-from neuro_grounded_qa.taskset import render_system_prompt
+from neuro_grounded_qa.reward import abstention_correct
+from neuro_grounded_qa.taskset import load_items, render_system_prompt
 from neuro_grounded_qa.tools import TOOL_PREFIX, KGToolsetConfig
 
 PROMPT = render_system_prompt(KGToolsetConfig())
@@ -111,3 +112,82 @@ def test_prompt_states_the_relation_filter_hint():
     neutral = hint.lower()
     for word in ("answer", "abstain", "unsupported", "question", "evidence"):
         assert word not in neutral
+
+
+# -- final-message format and the answer-or-abstain choice ---------------------------
+
+FORMAT_LINE = (
+    "When you are done, your final message must contain only one JSON object, with no "
+    "text before or after it: no introduction, no summary, no notes. The object may be "
+    "wrapped in one ```json code block, with nothing outside the block. Any other text "
+    "in the final message makes the whole reply unreadable. The object is either an answer:"
+)
+
+CHOICE_RULES = [
+    "- If no edge in your tool results states what the question asks, reply with the "
+    "abstention, even if you found related facts. You may mention those facts in "
+    '"reason".',
+    "- If your tool results support some of what the question asks but not all of it, "
+    'answer the supported part with claims and list the rest in "unsupported_parts".',
+    "- If the question rests on a premise that an edge in your tool results contradicts, "
+    "you may either abstain or answer with cited claims that correct the premise.",
+]
+
+
+def test_prompt_states_json_only_output():
+    assert FORMAT_LINE in PROMPT.splitlines()
+
+
+def test_parser_is_still_strict_about_text_around_the_json():
+    """The prompt says text outside the object makes the reply unreadable; that holds
+    because the parser is unchanged (one bare object, or one fenced block, only)."""
+    fenced = f"```json\n{EXAMPLES[1]}\n```"
+    assert isinstance(parse_output(fenced), Abstain)
+    for text in (
+        f"Here is my answer:\n{fenced}",
+        f"{fenced}\nHope this helps.",
+        f"Here is my answer: {EXAMPLES[1]}",
+    ):
+        failure = parse_output(text)
+        assert isinstance(failure, ParseFailure) and failure.reason == "not_json", text
+
+
+def test_prompt_states_the_answer_or_abstain_rules():
+    lines = PROMPT.splitlines()
+    start = lines.index("Choosing between an answer and an abstention:")
+    assert [line for line in lines[start + 1 :] if line] == CHOICE_RULES
+
+
+def test_choice_rules_name_no_question_types_or_labels():
+    """The rules restate what the reward scores, in terms of the tool results only.
+    They name no question type, template or answerability label, so they give no
+    hint about any particular item."""
+    text = " ".join(CHOICE_RULES).lower()
+    for word in (
+        "single_hop", "single-hop", "multi_hop", "multi-hop", "false_premise",
+        "false premise", "unanswerable", "answerable", "correctable", "partial",
+        "template", "bridge", "type", "score", "reward",
+    ):  # fmt: skip
+        assert word not in text, word
+    # The same holds for the whole prompt.
+    for word in ("unanswerable", "answerable", "correctable", "template", "bridge"):
+        assert word not in PROMPT.lower(), word
+
+
+def test_choice_rules_agree_with_the_reward():
+    """Each rule matches ``abstention_correct``: abstain when nothing asked is stated
+    (``no``), answer the supported part (``partial``), either for a contradicted
+    premise (``correctable``)."""
+    abstain, answer = parse_output(EXAMPLES[1]), parse_output(EXAMPLES[0])
+    by_label = {item.answerable: item for item in load_items(ITEMS_PATH, "train")}
+    assert {"yes", "partial", "no", "correctable"} <= by_label.keys()
+    expected = {
+        "yes": (False, True),
+        "partial": (False, True),
+        "no": (True, False),
+        "correctable": (True, True),
+    }
+    for label, (abstain_ok, answer_ok) in expected.items():
+        item = by_label[label]
+        assert abstention_correct(item, abstain) is abstain_ok, label
+        assert abstention_correct(item, answer) is answer_ok, label
