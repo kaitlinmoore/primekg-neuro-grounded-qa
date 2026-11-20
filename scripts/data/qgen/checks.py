@@ -1,18 +1,22 @@
 """Validity checks for question generation: the reusable, deterministic parts.
 
-The question generator (not written yet; see "Question generation design" in
-``docs/question_set_design.md``) builds candidate items from templates and keeps only
-those that pass every check below. ``scripts/data/qgen_feasibility.py`` runs the same
-checks now, to count how many candidates survive before any item is written. Both
-use this module, so the counts and the eventual items rest on one implementation.
+The question generator (``scripts/data/question_set.py generate``; see "Question
+generation design" in ``docs/question_set_design.md``) builds candidate items from
+templates and keeps only those that pass every check below. The feasibility script
+(``scripts/data/qgen_feasibility.py``) runs the same checks to count survivors, and
+the item check (``question_set.py check``) runs them again on written items. All
+three use this module, so the counts, the items and their re-check rest on one
+implementation.
 
 What lives here, and why each check exists:
 
-- **Name ambiguity** (:func:`name_check`). Questions name entities by name, never by
-  ID, so the model has to find the right node with ``search_entities``. A name that
-  returns another node first, or that another node shares, makes the question
-  ambiguous. The check runs the real tool body, so ranking and caps are exactly what
-  a model would see.
+- **Name ambiguity** (:func:`name_check`, :func:`typed_name_check`,
+  :func:`resolve_mention`). Questions name entities by name, never by ID, so the
+  model has to find the right node with ``search_entities``. A name that returns
+  another node first, or that another node shares, makes the question ambiguous.
+  The check runs the real tool body, so ranking and caps are exactly what a model
+  would see. A shared name is still allowed when the question names the entity's
+  type and, among the search results of that type, the name is unambiguous.
 - **Fallback entities** (:func:`has_fallback`). The store gives ``primekg:<index>``
   IDs to the 126 nodes whose CURIE collides (mostly one gene under an old and a new
   symbol). A claim about one copy doesn't match the other, so items avoid them.
@@ -38,7 +42,8 @@ What lives here, and why each check exists:
 
 Nothing here prints or returns question text. Checks return booleans, reasons and
 counts, so the scripts that call them can report aggregates only (see "Held-out
-protection" in the design doc).
+protection" in the design doc). Error messages name at most an entity or relation
+the caller passed in; the CLI never prints them for item data (``qgen.safety``).
 """
 
 from __future__ import annotations
@@ -105,6 +110,69 @@ def name_check(search: Callable[[str], list[Entity]], entity: Entity) -> NameChe
     if any(h.id != entity.id and h.name.strip().casefold() == key for h in hits):
         return NameCheck(False, "shared_name", rank)
     return NameCheck(True, "ok", rank)
+
+
+def typed_name_check(search: Callable[[str], list[Entity]], entity: Entity) -> NameCheck:
+    """Is ``entity.name`` unambiguous once the question also names its type?
+
+    The type-qualified rule (Kaitlin, 2026-11-19): a question may name an entity
+    whose name another node shares if it says the type ("the phenotype *X*") and a
+    search read that way resolves to the intended node. The tool has no type filter,
+    so "read that way" means: search the exact name with the real tool, keep only the
+    results of the entity's type, and apply :func:`name_check`'s two rules to those.
+
+    1. The intended entity is the **first** result of its type (it must be among the
+       tool's returned results at all), and
+    2. no other result of its type has the same name, ignoring case.
+
+    Reasons: ``ok``, ``blank``, ``not_found``, ``not_first_of_type``,
+    ``shared_name_in_type``. ``rank`` is the rank among same-type results.
+    """
+    name = entity.name.strip()
+    if not name:
+        return NameCheck(False, "blank")
+    hits = [h for h in search(name) if h.type == entity.type]
+    ids = [h.id for h in hits]
+    if entity.id not in ids:
+        return NameCheck(False, "not_found")
+    rank = ids.index(entity.id)
+    if rank != 0:
+        return NameCheck(False, "not_first_of_type", rank)
+    key = name.casefold()
+    if any(h.id != entity.id and h.name.strip().casefold() == key for h in hits):
+        return NameCheck(False, "shared_name_in_type", rank)
+    return NameCheck(True, "ok", rank)
+
+
+@dataclass(frozen=True)
+class Mention:
+    """How a question may name one entity: ``ok``, and whether the mention is
+    ``typed`` ("the phenotype *X*"). ``reason`` is the failing check's reason when not
+    ok (the strict rule's reason when typed mentions are off, else the typed rule's)."""
+
+    ok: bool
+    typed: bool
+    reason: str
+
+
+def resolve_mention(search: Callable[[str], list[Entity]], entity: Entity, allow_typed: bool = True) -> Mention:
+    """The name rule as the generator applies it.
+
+    The strict rule (:func:`name_check`) first: if it passes, the bare name is used.
+    Otherwise, with ``allow_typed``, the type-qualified rule
+    (:func:`typed_name_check`): if it passes, the question names the type. The choice
+    depends on the entity and the store only, never on the template, so a typed
+    mention says nothing about the answer.
+    """
+    strict = name_check(search, entity)
+    if strict.ok:
+        return Mention(True, False, "ok")
+    if not allow_typed:
+        return Mention(False, False, strict.reason)
+    typed = typed_name_check(search, entity)
+    if typed.ok:
+        return Mention(True, True, "ok")
+    return Mention(False, False, typed.reason)
 
 
 def has_fallback(entity_ids: Iterable[str]) -> bool:
@@ -252,10 +320,55 @@ class Route:
         return len(self.searches) + len(self.probes)
 
     def as_notes(self) -> list[dict]:
-        """The route in the JSON form an item's ``notes`` carries (IDs only)."""
+        """The route in the JSON form an item's ``notes`` carries (IDs only).
+
+        A search step names the entity *ID* the question names; the model searches
+        that entity's name (or its typed mention's name)."""
         return [{"tool": "search_entities", "entity": s} for s in self.searches] + [
             {"tool": "get_neighbors", "entity_id": e, "relation": r} for e, r in self.probes
         ]
+
+    @classmethod
+    def from_notes(cls, steps: Sequence[dict]) -> Route:
+        """Inverse of :meth:`as_notes`. Raises ValueError on an unknown step."""
+        searches: list[str] = []
+        probes: list[Probe] = []
+        for s in steps:
+            if s.get("tool") == "search_entities":
+                searches.append(s["entity"])
+            elif s.get("tool") == "get_neighbors":
+                probes.append((s["entity_id"], s["relation"]))
+            else:
+                raise ValueError("unknown route step")
+        return cls(tuple(searches), tuple(probes))
+
+
+def requirement_to_json(r: Requirement) -> dict:
+    """One requirement as JSON (IDs and relation labels only), for an item's notes."""
+    if isinstance(r, Show):
+        return {"kind": "show", "edge_id": r.edge_id, "u": r.u, "v": r.v, "relation": r.relation}
+    if isinstance(r, RuleOut):
+        return {"kind": "rule_out", "u": r.u, "relation": r.relation, "v": r.v}
+    return {"kind": "complete", "entity": r.entity, "relation": r.relation}
+
+
+def requirement_from_json(d: dict) -> Requirement:
+    """Inverse of :func:`requirement_to_json`. Raises ValueError on an unknown kind."""
+    kind = d.get("kind")
+    if kind == "show":
+        return Show(d["edge_id"], d["u"], d["v"], d["relation"])
+    if kind == "rule_out":
+        return RuleOut(d["u"], d["relation"], d["v"])
+    if kind == "complete":
+        return Complete(d["entity"], d["relation"])
+    raise ValueError("unknown requirement kind")
+
+
+def route_meets(prober: Prober, route: Route, reqs: Sequence[Requirement]) -> bool:
+    """Does ``route``'s probes meet every requirement? (The item check's re-run of
+    :func:`plan_route`'s condition, on the route an item recorded.)"""
+    probes = set(route.probes)
+    return all(probes & set(satisfiers(r, prober)) for r in reqs)
 
 
 def plan_route(
@@ -415,6 +528,38 @@ class FullGraph:
             [relation],
         ).fetchall()
         return {e: n for e, n in rows}
+
+    def subtree_entities(self, relation: str, source: str, root_source_ids: Iterable[str]) -> set[str]:
+        """Store entity IDs at or below the given roots in one hierarchy, in the full graph.
+
+        Roots are named by source and source ID, as PrimeKG writes them (HPO's "Mode
+        of inheritance", ``HP:0000005``, is ``source="HPO"``, ``source_id="5"``), and
+        looked up in the full graph's ``nodes`` table. The walk follows
+        ``pk_hier_first`` from parent to child (each relation's ``child_end``), so it
+        sees the whole ontology PrimeKG carries, not just the store's subgraph. Graph
+        nodes are mapped back to store IDs through ``index_of``; nodes the store
+        doesn't hold are left out. A root missing from the graph contributes nothing.
+        """
+        roots = list(dict.fromkeys(root_source_ids))
+        if not roots:
+            return set()
+        if relation not in self.child_end:
+            raise ValueError(f"relation {relation!r} has no hierarchy convention")
+        parent_col, child_col = ("parent", "child") if self.child_end[relation] == "y" else ("child", "parent")
+        rows = self.con.execute(
+            f"""
+            WITH RECURSIVE sub(n) AS (
+                SELECT id FROM nodes WHERE source = ? AND source_id IN (SELECT unnest(?::VARCHAR[]))
+                UNION
+                SELECT h.{child_col} FROM pk_hier_first h JOIN sub ON h.{parent_col} = sub.n
+                WHERE h.rel = ?
+            )
+            SELECT n FROM sub
+            """,
+            [source, roots, relation],
+        ).fetchall()
+        graph_nodes = {r[0] for r in rows}
+        return {sid for sid, ix in self.index_of.items() if ix in graph_nodes}
 
     def shared_neighbors(
         self, pairs: Iterable[tuple[str, str]], rel_x: str, rel_y: str

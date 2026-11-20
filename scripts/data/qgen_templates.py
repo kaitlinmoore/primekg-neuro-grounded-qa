@@ -1,9 +1,10 @@
 """The question templates: wording, shape and relations, as data.
 
 Each template is one question pattern. Its **shape** says how candidates are drawn
-from the store and how gold is computed (``qgen_feasibility.py`` implements the
-shapes; the generator will reuse it). The **text** names entities only by name,
-through ``{slots}``; IDs never appear in a question.
+from the store and how gold is computed (``qgen/candidates.py`` implements the
+shapes; the generator and the feasibility script share it). The **text** names
+entities only by name, through ``{slots}``; IDs never appear in a question. This file
+is the single template catalog: every wording the question set uses is here.
 
 Wording rules (see "Question generation design" in ``docs/question_set_design.md``):
 
@@ -14,20 +15,30 @@ Wording rules (see "Question generation design" in ``docs/question_set_design.md
   (unanswerable); ``evid2`` and ``list2`` read the same when both parts or one part
   are supported (single-hop vs partial).
 - **No answer in the question.** List members and bridge intermediates are never
-  named. ``qgen_checks.answer_leaks`` checks it per candidate.
+  named. ``qgen.checks.answer_leaks`` checks it per candidate.
 - **Neutral verbs.** Each relation has one fixed phrase, close to its PrimeKG
   ``display_relation`` ("associated with", "indicated for", "linked to"), with no
   hedging ("is it true that...") or emphasis that would hint at the answer.
 - **"Direct".** Relationship questions ask for a *direct* relation, so a path
   through a third entity is not an answer to them.
+- **Typed mentions.** An entity whose name another store node shares (mostly a
+  disease and a phenotype with one name) is named with its type, "the phenotype
+  *X*" (:func:`mention`), when a search for the name, read by type, finds it
+  unambiguously (``qgen.checks.resolve_mention``). Whether a mention is typed
+  depends on the entity alone, never on the template or the answer, so it can't
+  carry answerability. Where the wording already names the type ("has the
+  phenotype {obj}", "the pathway {x}"), the bare name is used
+  (:data:`TYPE_NAMED_BY_WORDING`).
 
 The phrases are the only biology-facing wording in the set; Kaitlin reviews them
-for domain correctness before implementation (open questions in the design doc).
+for domain correctness (open questions in the design doc).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 
 # --------------------------------------------------------------------------------------
 # Relation phrases
@@ -244,6 +255,70 @@ def catalog() -> tuple[Template, ...]:
         t.append(Template(f"fp_contra.{r}", "false_premise", "correctable", "evid", r))
     t.append(Template("fp_reversed.disease_disease", "false_premise", "correctable", "evid", "disease_disease"))
     return tuple(t)
+
+
+# --------------------------------------------------------------------------------------
+# Typed mentions
+# --------------------------------------------------------------------------------------
+
+TYPE_WORD: dict[str, str] = {
+    # store node type -> the word a question uses for it ("the <word> <name>")
+    "disease": "disease",
+    "effect/phenotype": "phenotype",
+    "gene/protein": "gene or protein",
+    "drug": "drug",
+    "exposure": "exposure",
+    "pathway": "pathway",
+    "biological_process": "biological process",
+    "molecular_function": "molecular function",
+    "cellular_component": "cellular component",
+    "anatomy": "anatomical structure",
+}
+"""How a typed mention names each node type. Covers every type in the store."""
+
+TYPE_NAMED_BY_WORDING: dict[tuple[str, str], frozenset[str]] = {
+    # (statement relation or bridge key, slot) pairs whose surrounding words already
+    # name the entity's type, so the slot takes the bare name even when typed.
+    ("disease_phenotype_positive", "obj"): frozenset({"effect/phenotype"}),  # "has the phenotype {obj}"
+    ("disease_phenotype_negative", "obj"): frozenset({"effect/phenotype"}),  # "the phenotype {obj} is ..."
+    ("pathway_assoc", "x"): frozenset({"pathway"}),  # "in the pathway {x}"
+}
+"""Slots where the wording names the type. Keyed by the statement's relation (for
+``evid``/``evid2``) or the bridge key, and the slot (``subj``/``obj``/``x``/``y``)."""
+
+
+def wording_names_type(key: str, slot: str, etype: str) -> bool:
+    """Does the wording around ``slot`` of statement/bridge ``key`` already say ``etype``?"""
+    return etype in TYPE_NAMED_BY_WORDING.get((key, slot), frozenset())
+
+
+def mention(name: str, etype: str, typed: bool) -> str:
+    """How a question names an entity: ``name``, or ``the <type word> <name>``."""
+    return f"the {TYPE_WORD[etype]} {name}" if typed else name
+
+
+def catalog_sha256() -> str:
+    """SHA-256 over every wording and template definition in this file.
+
+    Recorded in the item manifest, so an item set can be tied to the exact wording it
+    was generated with. It hashes content (canonical JSON), not the file's bytes, so a
+    comment edit doesn't change it and a wording edit always does.
+    """
+    content = {
+        "list_clause": LIST_CLAUSE,
+        "evid_statement": EVID_STATEMENT,
+        "evid_text": EVID_TEXT,
+        "evid2_text": EVID2_TEXT,
+        "rel_text": REL_TEXT,
+        "admissible": ADMISSIBLE,
+        "opposite": OPPOSITE,
+        "bridges": [asdict(b) for b in BRIDGES],
+        "catalog": [asdict(t) for t in catalog()],
+        "type_word": TYPE_WORD,
+        "type_named_by_wording": {f"{k}|{s}": sorted(v) for (k, s), v in TYPE_NAMED_BY_WORDING.items()},
+    }
+    blob = json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def cap_first(s: str) -> str:
