@@ -1,0 +1,2 @@
+{"id": "DIS_G", "primekg_index": "0", "x_source": "MONDO_grouped", "x_id": "0_1", "id_scheme": "group", "members": [{"id": "DIS_G_MEMBER", "name": "a member of DIS_G"}, {"id": "DIS_G_OTHER", "name": "another member"}]}
+{"id": "GENE_A", "primekg_index": "1", "x_source": "NCBI", "x_id": "1", "id_scheme": "curie"}

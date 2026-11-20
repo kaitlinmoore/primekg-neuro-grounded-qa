@@ -1,0 +1,131 @@
+{
+  "env": {
+    "taskset": {
+      "task": {
+        "judges": [],
+        "stops": {},
+        "metrics": {},
+        "rewards": {}
+      },
+      "system_prompt": null,
+      "id": "neuro-grounded-qa",
+      "items_path": "tests/fixtures/contracts/items.jsonl",
+      "split": "train",
+      "allow_heldout": false,
+      "tools": {
+        "runtime": {
+          "type": "subprocess"
+        },
+        "url": null,
+        "timeout": {
+          "startup": 600.0
+        },
+        "store_path": "tests/fixtures/contracts/mini_store.json",
+        "max_results": 20,
+        "max_calls": 8,
+        "paginate": false,
+        "max_payload_bytes": 16000
+      }
+    },
+    "timeout": {
+      "episode": null,
+      "finalize": null
+    },
+    "retries": {
+      "max_retries": 0,
+      "rules": []
+    },
+    "max_concurrent_agents": 1,
+    "interception": {
+      "type": "elastic",
+      "multiplex": 32
+    },
+    "id": "",
+    "agent": {
+      "harness": {
+        "id": "null",
+        "env": {},
+        "forward_env": [],
+        "mcp_header_env": {},
+        "tool_timeout": 600.0,
+        "disabled_tools": null,
+        "dialect": "chat_completions",
+        "skills": [],
+        "compaction": null
+      },
+      "runtime": {
+        "type": "subprocess"
+      },
+      "scoring": {},
+      "deployment": {
+        "mode": "colocated",
+        "trust_compose": false
+      },
+      "model": null,
+      "client": null,
+      "sampling": null,
+      "max_turns": null,
+      "max_input_tokens": null,
+      "max_output_tokens": null,
+      "max_total_tokens": null,
+      "max_turn_tokens": null,
+      "timeout": {
+        "setup": null,
+        "rollout": null,
+        "finalize": null,
+        "scoring": null
+      },
+      "retries": {
+        "max_retries": 0,
+        "rules": []
+      },
+      "network_notice": true
+    }
+  },
+  "run": {
+    "name": "neuro-grounded-qa--stub--mixed--null--3962a6c6",
+    "dir": "neuro-grounded-qa--stub--mixed--null--3962a6c6"
+  },
+  "model": "stub/mixed",
+  "client": {
+    "base_url": "http://127.0.0.1:35103/v1",
+    "api_key_var": "NGQ_STUB_API_KEY",
+    "headers": {},
+    "headers_from_env": {},
+    "timeout": {
+      "connect": 30.0,
+      "read": null,
+      "write": null,
+      "pool": null
+    },
+    "type": "eval"
+  },
+  "sampling": {
+    "temperature": null,
+    "top_p": null,
+    "reasoning_effort": null,
+    "max_tokens": null
+  },
+  "select": {
+    "include": {
+      "idx": [],
+      "ids": [],
+      "keys": [],
+      "names": []
+    },
+    "exclude": {
+      "idx": [],
+      "ids": [],
+      "keys": [],
+      "names": []
+    },
+    "shuffle": false,
+    "seed": 0,
+    "skip": 0,
+    "limit": null
+  },
+  "num_rollouts": 1,
+  "max_concurrent": 128,
+  "output_dir": "outputs",
+  "verbose": false
+}
