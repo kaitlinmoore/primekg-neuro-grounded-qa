@@ -22,6 +22,7 @@ dev = [
     "neuro-grounded-qa",
     "pytest",
     "ipykernel",
+    "scikit-learn>=1.9.1",
 ]
 # Graph download and measurement (scripts/data/, tests/data/). duckdb reads
 # PrimeKG's CSV and OptimusKG's parquet files directly and runs the joins and
