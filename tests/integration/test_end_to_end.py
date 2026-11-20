@@ -262,6 +262,9 @@ def test_metrics_and_provenance_are_in_traces(run):
                 "partial_flag_credit": 0.2,
                 "correctable_abstain_credit": 0.7,
                 "flag_only_counts": True,
+                "mu": 1.0,
+                "nongold_allowance": 3,
+                "version": "v1",
             }
             m = trace["metrics"]
             for key in ("format_ok", "unparseable", "claims", "duplicate_claims",

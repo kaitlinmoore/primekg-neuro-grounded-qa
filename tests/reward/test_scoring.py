@@ -1,7 +1,10 @@
 """Tests for the pure scoring code: each component, and the aggregate per answerable.
 
-Default params (reward v0) throughout unless a test says otherwise: λ = 0.5, κ = 0.2,
-abstaining on a correctable item scores 0.7, flag-only answers count on partial items.
+Default params (reward v1) throughout unless a test says otherwise: λ = 0.5, κ = 0.2,
+abstaining on a correctable item scores 0.7, flag-only answers count on partial items,
+and the precision penalty μ · max(0, N − a) / F at μ = 1, a = 3. Most answers below
+state at most three non-gold facts, so v0 and v1 agree on them; the precision-penalty
+section tests the term itself.
 Strict citations (one bad cite voids a claim) and fact deduplication (claims stating
 the same fact count once in S or U) always apply.
 
@@ -27,8 +30,10 @@ from contracts.builders import FIXTURES
 from neuro_grounded_qa.contracts import ParseFailure, parse_output, triple
 from neuro_grounded_qa.reward import (
     DEFAULT_PARAMS,
+    V0_PARAMS,
     RewardParams,
     clip,
+    precision_penalty,
     score,
     unsupported_penalty,
 )
@@ -109,9 +114,17 @@ def test_cite_to_unretrieved_id_is_stripped_and_claim_unsupported():
 # --- Strict citations ---------------------------------------------------------------
 
 
-def test_reward_v0_defaults():
+def test_reward_v1_defaults():
     assert DEFAULT_PARAMS == RewardParams(
-        lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True
+        lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True,
+        mu=1.0, nongold_allowance=3, version="v1",
+    )
+
+
+def test_reward_v0_is_v1_without_the_precision_penalty():
+    assert V0_PARAMS == RewardParams(
+        lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True,
+        mu=0.0, nongold_allowance=0, version="v0",
     )
 
 
@@ -431,6 +444,120 @@ def test_penalty_scales_with_lambda():
         assert b.reward == pytest.approx(1 - lam / 3)
 
 
+# --- Precision penalty (reward v1) ------------------------------------------------
+
+# Supported facts on the single-hop item that state no gold point (its gold is E:1, E:2).
+NONGOLD = [
+    claim("DRUG_X", "targets", "GENE_A", "E:000003"),
+    claim("DRUG_X", "indicated_for", "DIS_1", "E:000004"),
+    claim("DRUG_Y", "targets", "GENE_B", "E:000005"),
+    claim("DRUG_Y", "contraindicated_for", "DIS_2", "E:000006"),
+    PAD,  # GENE_A member_of PATH_P, E:000007
+    claim("GENE_C", "member_of", "PATH_P", "E:000008"),
+]
+
+
+def test_precision_penalty_formula():
+    assert precision_penalty(0, 0, 1.0, 3) == 0.0
+    assert precision_penalty(3, 5, 1.0, 3) == 0.0
+    assert precision_penalty(4, 6, 1.0, 3) == pytest.approx(1 / 6)
+    assert precision_penalty(10, 12, 0.5, 3) == pytest.approx(0.5 * 7 / 12)
+    assert precision_penalty(2, 2, 1.0, 0) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 3])
+def test_nongold_facts_up_to_the_allowance_are_free(n):
+    b = run(SINGLE, answer(GP1, GP2, *NONGOLD[:n]))
+    assert b.n_nongold_supported == n and b.nongold_over_allowance == 0
+    assert b.precision_penalty == 0.0
+    assert b.reward == 1.0
+
+
+@pytest.mark.parametrize("n", [4, 5, 6])
+def test_each_nongold_fact_over_the_allowance_costs_mu_over_f(n):
+    b = run(SINGLE, answer(GP1, GP2, *NONGOLD[:n]))
+    f = 2 + n
+    assert b.n_nongold_supported == n and b.nongold_over_allowance == n - 3
+    assert b.precision_penalty == pytest.approx((n - 3) / f)
+    assert b.penalty == 0.0  # every fact is supported: v0's penalty sees nothing
+    assert b.reward == pytest.approx(1 - (n - 3) / f)
+
+
+def test_v0_constants_turn_the_precision_penalty_off():
+    text = answer(GP1, GP2, *NONGOLD)
+    v0 = run(SINGLE, text, params=V0_PARAMS)
+    assert v0.n_nongold_supported == 6 and v0.precision_penalty == 0.0
+    assert v0.reward == 1.0
+    assert run(SINGLE, text).reward == pytest.approx(1 - 3 / 8)
+
+
+def test_precision_penalty_adds_to_the_unsupported_penalty():
+    """F counts unsupported facts too; an unsupported fact is never a non-gold fact."""
+    guess = claim("GENE_D", "associated_with", "DIS_1", "E:999999")
+    b = run(SINGLE, answer(GP1, GP2, guess, *NONGOLD[:5]))
+    assert (b.n_facts, b.n_unsupported, b.n_nongold_supported) == (8, 1, 5)
+    assert b.penalty == pytest.approx(0.5 / 8)
+    assert b.precision_penalty == pytest.approx(2 / 8)
+    assert b.reward == pytest.approx(1 - 0.5 / 8 - 2 / 8)
+
+
+def test_precision_penalty_counts_duplicate_facts_once():
+    """Repeating non-gold facts, or restating them reversed, adds nothing to N or F."""
+    reversed_copies = [claim(c["object_id"], c["relation"], c["subject_id"], *c["cites"]) for c in NONGOLD[:4]]
+    once = run(SINGLE, answer(GP1, GP2, *NONGOLD[:4]))
+    repeated = run(SINGLE, answer(GP1, GP2, *NONGOLD[:4], *NONGOLD[:4], *reversed_copies))
+    assert repeated.n_duplicates == 8
+    assert (repeated.n_facts, repeated.n_nongold_supported) == (once.n_facts, once.n_nongold_supported) == (6, 4)
+    assert repeated.precision_penalty == once.precision_penalty == pytest.approx(1 / 6)
+    assert repeated.reward == once.reward
+
+
+def test_unsupported_and_voided_claims_are_not_nongold_facts():
+    voided = claim("DRUG_X", "targets", "GENE_A", "E:000003", "E:999999")
+    wrong_cite = claim("DRUG_X", "indicated_for", "DIS_1", "E:000001")
+    b = run(SINGLE, answer(GP1, GP2, *NONGOLD[2:5], voided, wrong_cite))
+    assert b.n_nongold_supported == 3 and b.n_unsupported == 2
+    assert b.precision_penalty == 0.0
+
+
+def test_precision_penalty_applies_to_partial_answers():
+    """On a partial item the term comes off the whole score, flag credit included."""
+    b = run(PARTIAL, answer(GP1, GP2, *NONGOLD, unsupported=["Gene Delta part"]))
+    assert b.precision_penalty == pytest.approx(3 / 8)
+    assert b.reward == pytest.approx(0.8 * 1.0 + 0.2 - 3 / 8)
+    assert run(PARTIAL, answer(GP1, *NONGOLD[:3], unsupported=["x"])).reward == pytest.approx(0.8 * 0.5 + 0.2)
+
+
+def test_precision_penalty_applies_to_correctable_answers():
+    others = [c for c in NONGOLD if c is not NONGOLD[3]]  # NONGOLD[3] is the correction itself
+    b = run(FALSEP_FIX, answer(CORRECTION, *others))
+    assert b.coverage == 1.0 and b.n_nongold_supported == 5
+    assert b.reward == pytest.approx(1 - 2 / 6)
+
+
+@pytest.mark.parametrize("item", [UNANS, FALSEP_NO], ids=["unanswerable", "false_premise_no"])
+def test_no_items_are_unaffected_by_the_precision_penalty(item):
+    """Every supported fact is non-gold on a ``no`` item; the term is recorded, but an
+    answer scores 0 and an abstention 1 under v0 and v1 alike."""
+    b = run(item, answer(*NONGOLD))
+    assert b.n_nongold_supported == 6 and b.precision_penalty == pytest.approx(3 / 6)
+    assert b.reward == run(item, answer(*NONGOLD), params=V0_PARAMS).reward == 0.0
+    assert run(item, abstain()).reward == 1.0
+    assert run(item, abstain()).precision_penalty == 0.0
+
+
+def test_abstentions_and_parse_failures_have_no_precision_penalty():
+    for text in (abstain(), "not json"):
+        b = run(SINGLE, text)
+        assert b.n_nongold_supported == 0 and b.precision_penalty == 0.0
+
+
+@pytest.mark.parametrize("mu, a", [(0.0, 3), (0.5, 3), (1.0, 0), (1.0, 2), (1.0, 4), (2.0, 3)])
+def test_precision_penalty_follows_mu_and_the_allowance(mu, a):
+    b = run(SINGLE, answer(GP1, GP2, *NONGOLD), params=RewardParams(mu=mu, nongold_allowance=a))
+    assert b.reward == pytest.approx(clip(1 - mu * max(0, 6 - a) / 8))
+
+
 # --- answerable="yes" ---------------------------------------------------------------
 
 
@@ -643,11 +770,37 @@ def test_rewards_stay_in_unit_interval(lam, kappa):
         {"partial_flag_credit": 1.5},
         {"partial_flag_credit": -0.1},
         {"correctable_abstain_credit": 1.1},
+        {"mu": -1.0},
+        {"mu": float("inf")},
+        {"nongold_allowance": -1},
+        {"nongold_allowance": 2.5},
+        {"nongold_allowance": True},
+        {"version": "v2"},
+        {"version": "v0"},  # v0 with the default mu = 1
     ],
 )
 def test_invalid_params_are_rejected(kwargs):
     with pytest.raises(ValueError):
         RewardParams(**kwargs)
+
+
+def test_from_record_reads_a_record_without_a_version_as_v0():
+    """Traces recorded before reward v1 carry only v0's four constants."""
+    old = {"lam": 0.5, "partial_flag_credit": 0.2, "correctable_abstain_credit": 0.7, "flag_only_counts": True}
+    assert RewardParams.from_record(old) == V0_PARAMS
+    assert RewardParams.from_record({**old, "lam": 1.0}) == RewardParams(
+        lam=1.0, mu=0.0, nongold_allowance=0, version="v0")
+    # Building the record directly would silently read it as v1.
+    assert RewardParams(**old) == DEFAULT_PARAMS
+
+
+def test_from_record_round_trips_v1_and_defaults_without_a_record():
+    import dataclasses
+
+    assert RewardParams.from_record(dataclasses.asdict(DEFAULT_PARAMS)) == DEFAULT_PARAMS
+    custom = RewardParams(mu=0.5, nongold_allowance=2)
+    assert RewardParams.from_record(dataclasses.asdict(custom)) == custom
+    assert RewardParams.from_record(None) == DEFAULT_PARAMS
 
 
 def test_score_is_deterministic():

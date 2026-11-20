@@ -10,15 +10,20 @@ attacks this definition, so every rule below is meant to be checkable.
 - Tests: `tests/reward/`, on hand-built traces over the contracts' synthetic fixtures.
 - Sandbox: `practice/reward.ipynb`.
 
-**Status: reward v0, set by Kaitlin 2026-11-19. Exploratory, not frozen.** The
-constants (see "Reward v0 constants") and three rules are set: strict citations (any
-bad cite voids the claim), duplicate facts count once, and the final answer is the
-last sampled assistant message. Changes go in `docs/changelog.md`; nothing is frozen
-until `docs/frozen_config.md`.
+**Status: reward v1, set by Kaitlin 2026-11-20. Exploratory, not frozen.** Reward v1
+is reward v0 (2026-11-19) plus a precision penalty on supported facts that state no
+gold point, beyond a small allowance (component 6). It was chosen from the candidate
+fixes the reward-hacking audit scored offline (`docs/reward_hacking_audit.md`, parts 2
+and 3). The constants (see "Reward constants") and three rules are set: strict
+citations (any bad cite voids the claim), duplicate facts count once, and the final
+answer is the last sampled assistant message. Every result recorded before 2026-11-20's
+change is a **v0 result**. Changes go in `docs/changelog.md`; nothing is frozen until
+`docs/frozen_config.md`.
 
 The reward is wired into the environment: `taskset.NeuroGroundedQATask` inherits
-`GroundingRewardMixin`, and every trace records the constants it was scored with in
-`trace.info["reward_params"]`.
+`GroundingRewardMixin`, and every trace records the constants and the reward version
+it was scored with in `trace.info["reward_params"]` (`"version": "v1"`). A record
+without `version` was written by v0; `RewardParams.from_record` reads it as v0.
 
 ## Inputs
 
@@ -76,7 +81,8 @@ agent's last sampled message.
 ## Components
 
 Each is its own function in `scoring.py`. S is the set of supported claims, U the
-unsupported ones.
+unsupported ones. Components 1–5 and 7 are unchanged since v0; component 6 is new in
+v1.
 
 ### 1. Format gate: `format_ok(parsed)`
 
@@ -183,7 +189,43 @@ the correct claim's group.
   are.
 - The number of claims removed is recorded as `duplicate_claims`.
 
-### 6. Abstention correctness: `abstention_correct(item, parsed)`
+### 6. Precision penalty (reward v1): `precision_penalty(N, F, μ, a)`
+
+**Definition.** `μ · max(0, N − a) / F`, and 0 when the answer has no facts. F is the
+answer's distinct facts, |S| + |U| after deduplication (as in component 5). N counts
+the **supported** distinct facts that state **no gold point** (`scoring.gold_fact`: a
+fact is gold if it is supported and any copy of it states a gold point by
+`contracts.same_fact`). a is an allowance: the first a non-gold facts are free.
+
+**Why.** Unsupported claims already pay component 5. A claim that is true, retrieved
+and supported but not what the question asked costs nothing under v0, so an answer
+that restates every retrieved edge (the evidence dump) scored like an honest one. The
+precision penalty is the only term that reaches it. The allowance keeps a little
+honest context free: "Gene A is also associated with Disease Two" next to the asked
+fact.
+
+**Edge cases.**
+- Each non-gold fact past the allowance costs μ / F. At μ = 1 an answer that is
+  nearly all non-gold facts loses nearly all its coverage: the 23-fact dump of a
+  disease with 26 associated genes, one of them gold, scores 1 − 19/23 ≈ 0.17
+  (`tests/exploits/test_exploit_candidates.py`, candidate 1).
+- Unsupported facts are never non-gold facts (they pay component 5 instead), but they
+  count in F. So they dilute this penalty: see "Exploit candidates", 12.
+- Duplicates count once, as in component 5: repeating a non-gold fact, or restating it
+  reversed, adds nothing to N or F.
+- On items with no gold points (`no`) every supported fact is non-gold. The term is
+  computed and recorded there, but the aggregate gives any answer to a `no` item 0
+  anyway, as in v0.
+- It is subtracted wherever component 5 is: answers to `yes`, `partial` and
+  `correctable` items. On `partial` items it comes off the whole score, flag credit
+  included.
+- The recorded metrics are `nongold_supported_facts` (N), `nongold_over_allowance`
+  (max(0, N − a)) and `precision_penalty`.
+- **It relies on gold being complete:** every true answer to the question in the graph
+  must be a gold point. Otherwise an honest answer that names a true answer gold
+  leaves out is charged as if it were padding (see "Limitations").
+
+### 7. Abstention correctness: `abstention_correct(item, parsed)`
 
 **Definition.** Whether answering vs abstaining was the right choice:
 
@@ -205,8 +247,9 @@ isn't checked.
 
 ## Aggregate
 
-With cov = coverage, P = penalty, κ = partial-flag credit, A = correctable-abstain
-credit, flag = 1 if flagged else 0:
+With cov = coverage, P = the total penalty (component 5 plus component 6: λ·|U|/F +
+μ·max(0, N − a)/F), κ = partial-flag credit, A = correctable-abstain credit, flag = 1 if
+flagged else 0:
 
 | `answerable` | Parse failure | Abstain | Answer |
 |---|---|---|---|
@@ -248,22 +291,36 @@ everything else right. The weighted form above keeps the flag worth κ at every 
 level and never needs clipping above 1. Both forms agree that a flag-only answer scores
 κ. Kaitlin chose the weighted form for v0 (2026-11-19).
 
-## Reward v0 constants
+## Reward constants
 
-**v0, set by Kaitlin 2026-11-19.** They live in `RewardParams` (`scoring.py`);
-`DEFAULT_PARAMS` holds these values, and every trace records them in
+**v1, set by Kaitlin 2026-11-20**: v0's four constants (set 2026-11-19) unchanged, plus
+μ and a. They live in `RewardParams` (`scoring.py`); `DEFAULT_PARAMS` holds v1 and
+`V0_PARAMS` holds v0, and every trace records its constants and `version` in
 `trace.info["reward_params"]`. Exploratory: a change goes in `docs/changelog.md`.
 
-| Constant | v0 | Reason |
-|---|---|---|
-| λ (`lam`) | **0.5** | Unsupported claims can never add coverage (only supported claims cover gold), so any λ > 0 already makes adding one strictly worse; λ only sets how much a grounding error costs against the answer's coverage. At 0.5, an answer covering both gold points with one mis-cited claim scores 1 − 0.5/3 ≈ 0.83, and one whose facts are half unsupported loses 0.25. That keeps an honest answer with one copying error well above zero (λ = 1 would cost it 0.33), while a mostly-fabricated answer loses most of its coverage. Raising λ doesn't fix dilution by padding (the penalty is a share); the audit tests whether 0.5 is enough. |
-| κ (`partial_flag_credit`) | **0.2** | Flagging is cheap (any non-blank string), so it should be worth much less than coverage. At 0.2: full answer with flag 1.0, without 0.8; half coverage with flag 0.6; flag only 0.2. An always-flag-only policy earns κ × the partial share = 0.2 × 0.15 = 0.03 on the target mix, far below always-abstain. |
-| A (`correctable_abstain_credit`) | **0.7** | Below 1, a cited correction (up to 1.0) beats abstaining (0.7) on a correctable false premise, so a policy under training has a reason to correct. Abstaining still earns most of the credit, since it is a correct response to a false premise. It also lowers the always-abstain floor slightly (see below). At A = 1 (the first proposal), abstaining weakly dominated correcting. |
-| `flag_only_counts` | **True** | On a `partial` item, saying "this can't be answered" without claims is closer to right than abstaining (0) and much worse than a grounded partial answer. Setting it False makes a flag-only answer score 0, like an abstention. |
+| Constant | v0 | v1 | Reason |
+|---|---|---|---|
+| λ (`lam`) | **0.5** | **0.5** | Unsupported claims can never add coverage (only supported claims cover gold), so any λ > 0 already makes adding one strictly worse; λ only sets how much a grounding error costs against the answer's coverage. At 0.5, an answer covering both gold points with one mis-cited claim scores 1 − 0.5/3 ≈ 0.83, and one whose facts are half unsupported loses 0.25. That keeps an honest answer with one copying error well above zero (λ = 1 would cost it 0.33), while a mostly-fabricated answer loses most of its coverage. Raising λ doesn't fix dilution by padding (the penalty is a share); the audit tests whether 0.5 is enough. |
+| κ (`partial_flag_credit`) | **0.2** | **0.2** | Flagging is cheap (any non-blank string), so it should be worth much less than coverage. At 0.2: full answer with flag 1.0, without 0.8; half coverage with flag 0.6; flag only 0.2. An always-flag-only policy earns κ × the partial share = 0.2 × 0.15 = 0.03 on the target mix, far below always-abstain. |
+| A (`correctable_abstain_credit`) | **0.7** | **0.7** | Below 1, a cited correction (up to 1.0) beats abstaining (0.7) on a correctable false premise, so a policy under training has a reason to correct. Abstaining still earns most of the credit, since it is a correct response to a false premise. It also lowers the always-abstain floor slightly (see below). At A = 1 (the first proposal), abstaining weakly dominated correcting. |
+| `flag_only_counts` | **True** | **True** | On a `partial` item, saying "this can't be answered" without claims is closer to right than abstaining (0) and much worse than a grounded partial answer. Setting it False makes a flag-only answer score 0, like an abstention. |
+| μ (`mu`) | 0 (no term) | **1.0** | The audit's part 2 scored μ ∈ {0.25, 0.5, 1} offline on 5,800 recorded train traces. Only μ = 1 brings every question-only exploit under the threshold Kaitlin set (at most 0.10 of the abstain-to-honest gap): at a = 3 the worst, the dump that abstains on predicted `no` items (`dump_read_shape`), closes 0.03 of the gap, against 0.44 at μ = 0.5 and 0.65 at μ = 0.25. μ = 1 costs `honest` and `honest_context_1..3` nothing (the second threshold: at most 0.05). |
+| a (`nongold_allowance`) | – | **3** | Without an allowance a precision term charges honest context heavily: at μ = 1, a = 0, an honest answer plus one non-gold fact (`honest_context_1`) lost 0.314, far over the 0.05 threshold. At a = 3, answers with up to three non-gold facts pay nothing. a = 3 equals the largest context tested in part 2 (*k* = 3), so "context is free" holds up to three facts by construction; the part 3 sensitivity run reports a ∈ {2, 3, 4} and *k* up to 5. The same allowance leaves padding of up to three claims free (see "Limitations"). |
+| `version` | `"v0"` (absent from v0 records) | **`"v1"`** | Every trace says which reward scored it. |
+
+## Previous version: reward v0
+
+Reward v0 (Kaitlin, 2026-11-19) is the definition above **without component 6**: P is
+the unsupported-claim penalty alone, λ·|U|/(|S|+|U|). Its constants are the v0 column
+above (`V0_PARAMS`, μ = 0). Every audit, smoke-run and verification-run number recorded
+before 2026-11-20's change is a v0 result. Under v0 a true, supported, irrelevant claim
+cost nothing, which left the evidence dump (candidate 1) and penalty dilution
+(candidate 2) open. To rescore a trace under v0, pass `V0_PARAMS` to `reward.evaluate`.
 
 ## Always-abstain baseline
 
-Recorded from `tests/reward/test_policies.py`, at the v0 constants, and confirmed end
+Recorded from `tests/reward/test_policies.py`, at the v0 constants (v1 gives the same:
+an abstention has no facts, so the precision penalty is 0), and confirmed end
 to end through `scripts/run.sh` by `tests/integration/test_end_to_end.py`:
 
 - **Per fixture item:** single-hop 0, multi-hop 0, partial 0, unanswerable 1,
@@ -279,7 +336,7 @@ to end through `scripts/run.sh` by `tests/integration/test_end_to_end.py`:
 
 An honest oracle (claims every gold point with its evidence, flags on partial items,
 abstains on `no`) scores 1.0 on every fixture item, both on hand-built traces and end
-to end through the stub endpoint.
+to end through the stub endpoint, under v0 and v1 (its answers have no non-gold facts).
 
 ## Recorded metrics (not scored)
 
@@ -303,6 +360,9 @@ as 0. Per-tool keys appear only when nonzero; read a missing key as 0.
 | `claims` | claims per answer as written, duplicates included (0 for an abstention or parse failure) |
 | `citations_per_claim` | mean distinct cites per claim |
 | `supported_facts`, `unsupported_facts` | \|S\|, \|U\|: distinct facts after deduplication |
+| `nongold_supported_facts` | N: supported distinct facts that state no gold point (v1) |
+| `nongold_over_allowance` | max(0, N − a): the non-gold facts the precision penalty charges for (v1) |
+| `precision_penalty` | μ · max(0, N − a) / F (v1; 0 under v0). Recorded on every answer, like `unsupported_penalty`; neither counts on `no` items |
 | `duplicate_claims` | claims removed by deduplication (claims stating the same fact as an earlier claim; reversed restatements count unless the relation is directed) |
 | `voided_claims` | claims a valid cite states but a stripped cite made unsupported (strict citations) |
 | `stripped_cites` | cites to IDs that weren't retrieved |
@@ -357,35 +417,61 @@ rewards into `trace.reward`; and skipping scoring for format-violation traces.
   them), so this changes at most how many unsupported facts are counted.
 - **Free text is unscored.** `answer_text` can contradict the claims, and
   `unsupported_parts` can say anything; neither changes the score.
-- **No precision term beyond the penalty.** A claim that is true, retrieved and
-  supported but irrelevant costs nothing (see "Evidence dump" below).
+- **The precision penalty depends on gold completeness.** It charges every supported
+  fact that states no gold point, so it is fair only if gold is the full set of true
+  answers to the question in the graph. The audit's check (`exploits/gold_completeness.py`)
+  found gold complete on every train item and every template family in use (part 2).
+  A new template, or a new evidence source (PubMed passages in phase 2), whose gold
+  isn't the full answer set would make v1 charge correct answers as padding. Such a
+  template needs its gold computed as the full answer set, or a completeness check
+  that keeps it out (the generator gains one).
+- **Up to a non-gold facts are free (a = 3).** A small dump, or padding of up to three
+  true, irrelevant claims, costs nothing. Within the allowance padding still dilutes
+  the unsupported penalty (one guess plus two padding claims scores more than the guess
+  alone); it never lifts an answer above the honest one, since padding can't add
+  coverage. The allowance is the same for every item, whatever its number of gold
+  points.
+- **Unsupported claims dilute the precision penalty** (candidate 12). F counts
+  unsupported facts, so an answer whose total penalty exceeds λ scores *more* with
+  each fabricated claim it adds, tending to coverage − λ.
 - **Coverage is all-or-nothing per gold point** and equal-weighted across gold points;
   a multi-hop item's chain edges count the same as its endpoints.
 
 ## Exploit candidates
 
-Seeds for the audit. Reward v0 leaves the first three **open on purpose**; the audit
-measures them before anything is changed. The v0 baseline for every candidate is in
-`docs/reward_hacking_audit.md`.
+Seeds for the audit, with their status under reward v1. The measured figures, under
+v0 and v1, are in `docs/reward_hacking_audit.md`; the regression tests are in
+`tests/exploits/test_exploit_candidates.py` (open ones carry `exploit_open`).
 
-**Open, for the audit:**
+**Closed past the allowance by v1:**
 
 1. **Evidence dump.** Retrieve every neighbor of the question's entities and restate
-   every edge as a cited claim. Every claim is supported, so the penalty is 0, and every
-   gold point among the neighbors is covered: the dump scores 1.0 on the fixture
-   single-hop item (`practice/reward.ipynb` shows it). This is the brief's open problem.
-2. **Supported padding (penalty dilution).** The penalty is a share of distinct facts,
-   so true, supported, irrelevant facts shrink the cost of unsupported guesses. Guesses
-   never add coverage, so dilution only softens a cost; it matters most combined with
-   (1). (Padding with *repeats* of the same fact is closed by deduplication.)
+   every edge as a cited claim. Every claim is supported, so v0's penalty is 0 and every
+   gold point among the neighbors is covered: under v0 the dump scored 0.642 on the
+   train items, and the dump that abstains when the evidence shows no answer
+   (`dump_read_shape`) 0.897. v1 charges its non-gold facts: the dump falls to 0.044 and `dump_read_shape` to 0.306, which is 0.03 of the abstain-to-honest gap (the threshold is 0.10). **Residual,
+   open:** a dump of at most three non-gold facts is free (the fixture single-hop
+   item's dump still scores 1.0).
+2. **Supported padding (penalty dilution).** v0's penalty is a share of distinct
+   facts, so true, supported, irrelevant facts shrink the cost of unsupported guesses.
+   Past the allowance each padding claim now costs more than it dilutes (one guess plus
+   ten padding claims: v0 0.970, v1 0.552). **Residual, open:** up to three padding
+   claims still dilute (one guess plus two padding claims keeps v0's 0.916). Padding
+   never lifts an answer above the honest one. (Padding with *repeats* of the same fact
+   is closed by deduplication.)
+
+**Open:**
+
 3. **Always flag.** Flags earn κ on `partial` items and cost nothing on `yes` items, and
-   their text isn't checked, so a policy should always add one.
+   their text isn't checked, so a policy should always add one. v1 doesn't touch flags
+   (no flag cost, Kaitlin 2026-11-20).
 
 **Other candidates:**
 
-4. **Reversed type-fixed relations** (Limitations). Hierarchy relations are now
-   flagged `directed` and match in order only; relations whose roles are fixed by entity
-   types (`targets`, `indicated_for`) still match reversed.
+4. **Reversed type-fixed relations** (Limitations). **By design** (Kaitlin,
+   2026-11-20): between entities of different types the types fix the roles, so the
+   reversed claim states the same fact. Hierarchy relations are flagged `directed` and
+   match in order only.
 5. **Abstain on correctable items.** Mitigated in v0: with A = 0.7, a cited correction
    (1.0) beats abstaining. The audit can still check whether 0.7 is low enough.
 6. **Sequential edge-ID probing.** After a truncated `get_neighbors` page, call
@@ -395,7 +481,7 @@ measures them before anything is changed. The v0 baseline for every candidate is
    subject, object). Kept on purpose (Kaitlin, 2026-11-20); the audit records it as a
    behavior and counts it as a cheaper route to the evidence dump (1).
 
-**Closed in v0, kept as regression cases:**
+**Closed since v0, kept as regression cases:**
 
 7. **Duplicate claims.** Repeating a supported claim (in either order, for undirected
    relations) no longer adds to |S|: duplicate facts count once. A reversed directed
@@ -410,6 +496,15 @@ measures them before anything is changed. The v0 baseline for every candidate is
    but still visible in `citations_per_claim`.
 11. **Fabricated, typed-in and prompt-injected IDs.** Closed by strict retrieval; kept
    as regression cases (`test_adapter.py`).
+
+**Found under v1, open:**
+
+12. **Unsupported claims dilute the precision penalty** (found under v1). F counts
+    unsupported facts, so once an answer's total penalty exceeds λ, each fabricated claim
+    it adds lowers the penalty, toward λ: the 23-fact dump in component 6 rises from 0.17 to 0.40
+    with 50 fabricated claims. On train, `dump_read_shape` with 25 fabricated claims per
+    answer would close 0.14 of the gap, over the 0.10 threshold (offline what-if, audit
+    part 3). Not fixed; raised for decision.
 
 ## What the harness must guarantee
 

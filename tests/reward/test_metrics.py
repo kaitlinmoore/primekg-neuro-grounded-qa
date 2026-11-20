@@ -68,6 +68,24 @@ def test_voided_and_duplicate_claims_are_recorded():
     assert "premise_asserted" not in m
 
 
+def test_precision_penalty_metrics():
+    """Non-gold supported facts, the excess over the allowance (a = 3) and the term."""
+    nongold = [claim("DRUG_X", "targets", "GENE_A", "E:000003"),
+               claim("DRUG_X", "indicated_for", "DIS_1", "E:000004"),
+               claim("GENE_A", "member_of", "PATH_P", "E:000007"),
+               claim("GENE_C", "member_of", "PATH_P", "E:000008"),
+               claim("GENE_C", "associated_with", "DIS_2", "E:000009")]
+    ids = ["E:000001", "E:000002", "E:000003", "E:000004", "E:000007", "E:000008", "E:000009"]
+    m = metrics_for(SINGLE, answer(GP1, GP2, *nongold), ids)
+    assert m["nongold_supported_facts"] == 5.0
+    assert m["nongold_over_allowance"] == 2.0
+    assert m["precision_penalty"] == pytest.approx(2 / 7)
+    within = metrics_for(SINGLE, answer(GP1, GP2, *nongold[:3]), ids)
+    assert (within["nongold_supported_facts"], within["nongold_over_allowance"], within["precision_penalty"]) == (3.0, 0.0, 0.0)
+    gone = metrics_for(SINGLE, abstain(), ids)
+    assert (gone["nongold_supported_facts"], gone["nongold_over_allowance"], gone["precision_penalty"]) == (0.0, 0.0, 0.0)
+
+
 def test_undefined_ratios_are_left_out_for_an_abstention():
     m = metrics_for(SINGLE, abstain(), ["E:000001"])
     assert m["abstained"] == 1.0

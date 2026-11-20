@@ -7,8 +7,9 @@ claim is checked against its cited evidence with ``contracts.supports``; support
 claims are matched to the item's gold points with ``contracts.same_fact``. This is
 the instrument the reward-hacking audit targets. ``docs/reward_spec.md`` defines it.
 
-- ``scoring``: pure functions, one per component, plus ``score`` and ``aggregate``.
-  No trace or runtime involved.
+- ``scoring``: pure functions, one per component, plus ``score`` and ``aggregate``,
+  and ``RewardParams`` (the constants; ``DEFAULT_PARAMS`` is reward v1,
+  ``V0_PARAMS`` reward v0). No trace or runtime involved.
 - ``metrics``: recorded-but-unscored metrics.
 - ``adapter``: reads a ``vf.Trace`` through the contracts, and
   ``GroundingRewardMixin`` exposes ``@vf.reward``/``@vf.metric`` methods.
@@ -25,7 +26,9 @@ from neuro_grounded_qa.reward.adapter import (
 from neuro_grounded_qa.reward.metrics import answer_metrics, trace_metrics
 from neuro_grounded_qa.reward.scoring import (
     DEFAULT_PARAMS,
+    REWARD_VERSIONS,
     SUPPORT_CHECKERS,
+    V0_PARAMS,
     ClaimCheck,
     FactGroup,
     Outcome,
@@ -39,7 +42,9 @@ from neuro_grounded_qa.reward.scoring import (
     directed_relations,
     flagged,
     format_ok,
+    gold_fact,
     group_facts,
+    precision_penalty,
     score,
     split_citations,
     supporting_citation,
@@ -48,7 +53,9 @@ from neuro_grounded_qa.reward.scoring import (
 
 __all__ = [
     "DEFAULT_PARAMS",
+    "REWARD_VERSIONS",
     "SUPPORT_CHECKERS",
+    "V0_PARAMS",
     "ClaimCheck",
     "Evaluation",
     "FactGroup",
@@ -68,7 +75,9 @@ __all__ = [
     "final_reply",
     "flagged",
     "format_ok",
+    "gold_fact",
     "group_facts",
+    "precision_penalty",
     "root_reply_metrics",
     "score",
     "split_citations",

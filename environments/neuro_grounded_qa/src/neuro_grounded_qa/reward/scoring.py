@@ -27,10 +27,22 @@ Components, each its own small function below:
    ``lam * |U| / (|S| + |U|)``, where S and U count distinct *facts*: claims that
    state the same fact (``contracts.same_fact``) are collapsed first
    (``group_facts``), and a fact is supported if any of its copies is.
-6. **Abstention correctness** (``abstention_correct``): whether answering vs
+6. **Precision penalty** (``precision_penalty``, reward v1):
+   ``mu * max(0, N - a) / F``, where N counts supported facts that state no gold
+   point (``gold_fact``), F all distinct facts and ``a`` is a small allowance of free
+   non-gold facts. It is what makes restating every retrieved edge (the evidence dump)
+   cost something: those claims are all supported, so (5) never sees them.
+7. **Abstention correctness** (``abstention_correct``): whether answering vs
    abstaining was the right choice for the item's ``answerable`` label.
 
-``aggregate`` combines them per ``answerable`` value and clips to [0, 1].
+``aggregate`` combines them per ``answerable`` value and clips to [0, 1]. The two
+penalties are added before it subtracts them.
+
+**Versions.** Reward v0 (2026-11-19) is the same formula with ``mu = 0``
+(``V0_PARAMS``). Reward v1 (2026-11-20, ``DEFAULT_PARAMS``) adds the precision
+penalty at ``mu = 1, a = 3``. Every trace records the constants and the version it was
+scored with; :meth:`RewardParams.from_record` reads them back, and treats a record with
+no version as v0, since v0 traces predate the marker.
 
 Two rules keep the audit honest. Triples are never compared directly: every
 comparison goes through ``supports``/``same_fact`` from ``contracts.facts``, so the
@@ -71,40 +83,84 @@ Outcome = Literal["answer", "abstain", "parse_failure"]
 """What the model's final reply was, after parsing."""
 
 
+REWARD_VERSIONS = ("v0", "v1")
+"""Reward versions this code can score. v0 is v1 with the precision weight at 0."""
+
+
 @dataclass(frozen=True)
 class RewardParams:
-    """The reward's tunable constants. The defaults are **reward v0**, set by Kaitlin
-    on 2026-11-19; ``docs/reward_spec.md`` gives the reasoning for each. Exploratory,
-    not frozen: a change goes in ``docs/changelog.md``.
+    """The reward's tunable constants. The defaults are **reward v1**, set by Kaitlin
+    on 2026-11-20 (v0's four constants, set 2026-11-19, plus the precision penalty's
+    two); ``docs/reward_spec.md`` gives the reasoning for each. Exploratory, not
+    frozen: a change goes in ``docs/changelog.md``.
 
-    - ``lam`` (λ): weight of the unsupported-claim penalty. v0: 0.5.
+    - ``lam`` (λ): weight of the unsupported-claim penalty. v0, v1: 0.5.
     - ``partial_flag_credit`` (κ): on ``partial`` items, the share of the score
       given for naming the unsupported part (a non-blank ``unsupported_parts``).
-      Coverage gets the other ``1 - κ``. v0: 0.2.
+      Coverage gets the other ``1 - κ``. v0, v1: 0.2.
     - ``correctable_abstain_credit``: the score for abstaining on a
       ``correctable`` false-premise item. A cited correction can score up to 1, so
-      below 1 correcting beats abstaining. v0: 0.7.
+      below 1 correcting beats abstaining. v0, v1: 0.7.
     - ``flag_only_counts``: whether an answer with no claims and only
-      ``unsupported_parts`` earns the flag credit on a ``partial`` item. v0: True.
+      ``unsupported_parts`` earns the flag credit on a ``partial`` item. v0, v1: True.
+    - ``mu`` (μ): weight of the precision penalty, ``μ · max(0, N − a) / F``. At 1,
+      an answer made almost entirely of supported non-gold facts loses nearly all its
+      coverage. v1: 1.0. v0: 0 (no precision penalty).
+    - ``nongold_allowance`` (a): supported non-gold facts an answer may state before
+      the precision penalty starts, so an honest answer can add a little context for
+      free. v1: 3. Ignored when ``mu`` is 0.
+    - ``version``: which reward these constants define, recorded with every trace so
+      each trace says which reward scored it. ``"v0"`` requires ``mu == 0``.
     """
 
     lam: float = 0.5
     partial_flag_credit: float = 0.2
     correctable_abstain_credit: float = 0.7
     flag_only_counts: bool = True
+    mu: float = 1.0
+    nongold_allowance: int = 3
+    version: str = "v1"
 
     def __post_init__(self) -> None:
-        for name in ("lam", "partial_flag_credit", "correctable_abstain_credit"):
+        for name in ("lam", "partial_flag_credit", "correctable_abstain_credit", "mu"):
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and >= 0, got {value}")
         for name in ("partial_flag_credit", "correctable_abstain_credit"):
             if getattr(self, name) > 1:
                 raise ValueError(f"{name} must be <= 1, got {getattr(self, name)}")
+        a = self.nongold_allowance
+        if isinstance(a, bool) or not isinstance(a, int) or a < 0:
+            raise ValueError(f"nongold_allowance must be an int >= 0, got {a!r}")
+        if self.version not in REWARD_VERSIONS:
+            raise ValueError(f"version must be one of {REWARD_VERSIONS}, got {self.version!r}")
+        if self.version == "v0" and self.mu != 0:
+            raise ValueError("reward v0 has no precision penalty: mu must be 0")
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, object] | None) -> RewardParams:
+        """The constants a trace was scored with, from ``trace.info["reward_params"]``.
+
+        A record without ``version`` was written by reward v0, before the marker and
+        the precision constants existed, so it is read as v0 (``mu = 0``) with its
+        recorded λ, κ, A and ``flag_only_counts``. Building ``RewardParams(**record)``
+        directly would silently fill in v1's precision constants instead. No record at
+        all gives ``DEFAULT_PARAMS``.
+        """
+        if record is None:
+            return DEFAULT_PARAMS
+        data = dict(record)
+        if "version" not in data:
+            data = {**data, "mu": 0.0, "nongold_allowance": 0, "version": "v0"}
+        return cls(**data)  # type: ignore[arg-type]
 
 
 DEFAULT_PARAMS = RewardParams()
-"""Reward v0 (Kaitlin, 2026-11-19). Not frozen: see ``docs/reward_spec.md``."""
+"""Reward v1 (Kaitlin, 2026-11-20). Not frozen: see ``docs/reward_spec.md``."""
+
+V0_PARAMS = RewardParams(mu=0.0, nongold_allowance=0, version="v0")
+"""Reward v0 (Kaitlin, 2026-11-19): v1 without the precision penalty. Kept so earlier
+results can be recomputed and compared."""
 
 
 # --- Support check, dispatched by evidence kind -------------------------------------
@@ -345,6 +401,35 @@ def unsupported_penalty(n_supported: int, n_unsupported: int, lam: float) -> flo
     return 0.0 if total == 0 else lam * n_unsupported / total
 
 
+def gold_fact(fact: FactGroup, item: QuestionItem) -> bool:
+    """The fact is supported and states one of the item's gold points
+    (``contracts.same_fact``, on any of its copies).
+
+    A supported fact that is not a gold fact is a *non-gold* fact: true and retrieved,
+    but not what the question asked. An unsupported fact is neither: the unsupported
+    penalty already counts it. On items with no gold points (``no``), every supported
+    fact is non-gold.
+    """
+    return fact.supported and any(
+        same_fact(c.claim, gp) for c in fact.claims for gp in item.gold_points
+    )
+
+
+def precision_penalty(n_nongold: int, n_facts: int, mu: float, allowance: int) -> float:
+    """Precision penalty (reward v1): ``mu * max(0, N - a) / F``, or 0 with no facts.
+
+    N is the answer's supported non-gold facts, F its distinct facts (supported or
+    not) and ``a`` the allowance. The first ``a`` non-gold facts are free; each one
+    beyond costs ``mu / F``. Because F counts every fact, the penalty is a share like
+    the unsupported penalty, and at ``mu = 1`` an answer that is nearly all non-gold
+    facts loses nearly all its coverage. Duplicates count once (``group_facts``), so
+    restating a fact can't raise N or F.
+    """
+    if n_facts == 0:
+        return 0.0
+    return mu * max(0, n_nongold - allowance) / n_facts
+
+
 def flagged(answer: Answer) -> bool:
     """The answer names at least one unsupported part (a non-blank string in
     ``unsupported_parts``). Its content isn't checked: free text isn't scored."""
@@ -389,6 +474,10 @@ def aggregate(
     params: RewardParams,
 ) -> float:
     """Combine the components into the unclipped reward, per ``answerable`` value.
+
+    ``penalty`` is the total penalty: ``score`` passes the unsupported penalty plus
+    the precision penalty. It is subtracted on answers to ``yes``, ``partial`` and
+    ``correctable`` items and nowhere else.
 
     - Parse failure: 0.
     - ``yes``: answer -> ``coverage - penalty``; abstain -> 0.
@@ -449,6 +538,15 @@ class ScoreBreakdown:
     coverage: float | None
     covered_gold: tuple[str, ...]
     penalty: float
+    """The unsupported-claim penalty (v0's only penalty)."""
+    n_nongold_supported: int
+    """N: supported distinct facts that state no gold point (``gold_fact``)."""
+    nongold_over_allowance: int
+    """``max(0, N − a)``: the non-gold facts the precision penalty charges for."""
+    precision_penalty: float
+    """``μ · max(0, N − a) / F`` (0 under v0). The aggregate subtracts
+    ``penalty + precision_penalty``; like ``penalty`` it is recorded on every answer
+    but used only where the aggregate uses a penalty (not on ``no`` items)."""
     flagged: bool
     abstention_correct: bool
     premise_asserted: bool | None
@@ -531,8 +629,13 @@ def score(
         covered = ()
         is_flagged = False
     penalty = unsupported_penalty(n_supported, n_unsupported, params.lam)
+    n_nongold = sum(f.supported and not gold_fact(f, item) for f in facts)
+    over = max(0, n_nongold - params.nongold_allowance)
+    prec_penalty = precision_penalty(n_nongold, len(facts), params.mu, params.nongold_allowance)
 
-    raw = aggregate(item.answerable, outcome, cov, penalty, is_flagged, n_claims, params)
+    raw = aggregate(
+        item.answerable, outcome, cov, penalty + prec_penalty, is_flagged, n_claims, params
+    )
     return ScoreBreakdown(
         answerable=item.answerable,
         outcome=outcome,
@@ -545,6 +648,9 @@ def score(
         coverage=cov,
         covered_gold=covered,
         penalty=penalty,
+        n_nongold_supported=n_nongold,
+        nongold_over_allowance=over,
+        precision_penalty=prec_penalty,
         flagged=is_flagged,
         abstention_correct=abstention_correct(item, parsed),
         premise_asserted=(
