@@ -60,6 +60,16 @@ navigation aids, not evidence: they sit in ``note``, which ``retrieved_ids`` nev
 reads. Smoke-run traces showed models guessing display labels ("has phenotype") or
 invented ones and spending calls on "Unknown relation" results.
 
+**Filtered truncation counts.** ``get_neighbors`` *with* a relation whose result was
+cut gives the entity's total for that relation instead of a bare "more exist":
+"Showing 20 of 59 edges with relation 'disease_phenotype_positive'; more exist." In
+paged mode the offset hint follows ("Call again with offset=40 for more."); the total
+is the entity's, not the remainder. The total comes from :meth:`relation_counts`, the
+same count the summaries list. Once the prompt listed the labels, models filtered
+almost every call, so cut pages stopped carrying any count, and one model probed edge
+IDs one by one to find the rest. Like the summaries, the count is a navigation aid in
+``note``, not evidence.
+
 **Call budget.** The tool server is *shared*: one process serves every rollout of a
 run (``Taskset.toolsets``), so a counter on the server object would mix rollouts.
 Verifiers 0.4.1 has a per-rollout channel for exactly this: a ``vf.State`` subclass
@@ -306,6 +316,7 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
         field: str,
         more: bool,
         hint: Callable[[int], str] = lambda shown: "",
+        lead: Callable[[int], str] = lambda shown: f"Showing {shown} results; more exist.",
     ) -> str:
         """Serialize a result list, capped by count and by payload size.
 
@@ -315,13 +326,16 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
             more: True if the store had more results than ``items``.
             hint: given how many results are shown, says how to get the rest;
                 appended to the note when truncated.
+            lead: given how many results are shown, the note's first sentence when
+                truncated. The default doesn't know the total; filtered
+                ``get_neighbors`` passes one that does.
         """
         items = list(items)
         truncated = more
         while True:
             note = None
             if truncated:
-                note = f"Showing {len(items)} results; more exist. {hint(len(items))}".strip()
+                note = f"{lead(len(items))} {hint(len(items))}".strip()
             elif not items:
                 note = "No results."
             out = _payload(**{field: items}, truncated=truncated, note=note)
@@ -415,7 +429,22 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
                 return f"Call again with offset={offset + shown} for more.{summary}"
             return "" if relation is not None else f"Pass a relation to narrow the list.{summary}"
 
-        return self._fit(page, "evidence", more, hint)
+        if relation is None:
+            return self._fit(page, "evidence", more, hint)
+
+        # Filtered and truncated: say how many edges the entity has with this relation,
+        # as the unfiltered note's summary already does. Without the total, a cut page
+        # says only that more exist, and a model may probe edge IDs one by one to find
+        # out how many. `relation` has edges here (the absence check above returned).
+        total = dict(self.relation_counts(entity_id))[relation]
+
+        def lead(shown: int) -> str:
+            return (
+                f"Showing {shown} of {total} edges with relation {_echo(relation)}; "
+                "more exist."
+            )
+
+        return self._fit(page, "evidence", more, hint, lead)
 
     def _edge(self, edge_id: str) -> str:
         edge = self.store.get(edge_id)
