@@ -219,8 +219,9 @@ def trace_row(saved: Mapping[str, Any], members: Mapping[str, str], max_calls: i
     reward = float(saved["rewards"][REWARD_NAME]["score"])
     info = saved.get("info") or {}
 
-    # Offline rescore with the recorded constants.
-    params = RewardParams(**info["reward_params"]) if "reward_params" in info else RewardParams()
+    # Offline rescore with the recorded constants. A record without a version marker
+    # is reward v0's (RewardParams.from_record); no record means the defaults.
+    params = RewardParams.from_record(info.get("reward_params"))
     rescore = evaluate(trace, item, params).breakdown.reward
 
     parsed = parse_output(final_reply(trace))
