@@ -20,7 +20,7 @@ from harness.helpers import (
     run,
     wide_store,
 )
-from neuro_grounded_qa.contracts import retrieved_ids
+from neuro_grounded_qa.contracts import InMemoryEvidenceStore, retrieved_ids
 from neuro_grounded_qa.tools import KGToolsetConfig, load_store
 from neuro_grounded_qa.tools.kg import DEFAULT_MAX_PAYLOAD_BYTES
 
@@ -263,9 +263,159 @@ def test_errors_are_payloads_with_a_note(tool, kwargs, fragment):
     assert fragment in payload.note
 
 
-def test_unknown_relation_note_lists_the_vocabulary():
-    note = parse(run(make_toolset().get_neighbors("GENE_A", "causes"))).note
-    assert "member_of" in note and "targets" in note
+# -- relation summaries in notes ---------------------------------------------------
+
+GENE_A_SUMMARY = (
+    "This entity's relation labels, with edge counts: associated_with (1), "
+    "interacts_with (1), member_of (1), targets (1)."
+)
+DIS_1_SUMMARY = (
+    "This entity's relation labels, with edge counts: associated_with (2), "
+    "has_phenotype (1), indicated_for (1)."
+)
+
+
+def test_unknown_relation_note_lists_the_entitys_labels_with_counts():
+    payload = parse(run(make_toolset().get_neighbors("GENE_A", "has phenotype")))
+    assert payload.evidence == [] and payload.truncated is False
+    assert payload.note == (
+        f"Unknown relation 'has phenotype'. {GENE_A_SUMMARY} "
+        "Pass one of these labels exactly as written."
+    )
+    # Only the entity's own labels, not the whole vocabulary.
+    assert "has_phenotype" not in payload.note and "subtype_of" not in payload.note
+
+
+def test_unknown_relation_on_an_entity_with_no_edges():
+    store = InMemoryEvidenceStore.from_records(
+        {
+            "entities": [
+                {"id": "LONE", "name": "Lone", "type": "gene"},
+                {"id": "A", "name": "A", "type": "gene"},
+                {"id": "B", "name": "B", "type": "gene"},
+            ],
+            "edges": [{"id": "E:000001", "subject": "A", "relation": "links", "object": "B"}],
+        }
+    )
+    note = parse(run(make_toolset(store).get_neighbors("LONE", "nope"))).note
+    assert note == "Unknown relation 'nope'. This entity has no edges."
+
+
+def test_summary_orders_by_count_then_label():
+    """DIS_1 has associated_with twice and two labels once each: the higher count comes
+    first, and the tie is broken alphabetically."""
+    ts = make_toolset()
+    assert ts.relation_counts("DIS_1") == [
+        ("associated_with", 2),
+        ("has_phenotype", 1),
+        ("indicated_for", 1),
+    ]
+    assert ts.relation_summary("DIS_1") == DIS_1_SUMMARY
+
+
+def test_summary_counts_edges_in_both_directions():
+    """A count is what get_neighbors with that label lists in full: edges where the
+    entity is subject and where it is object (DRUG_X targets GENE_A)."""
+    store = fixture_store()
+    ts = make_toolset(store)
+    for label, n in ts.relation_counts("GENE_A"):
+        assert len(store.neighbors("GENE_A", label, 100)) == n
+
+
+def test_truncated_unfiltered_neighbors_note_lists_the_labels():
+    payload = parse(run(make_toolset(max_results=2).get_neighbors("DIS_1")))
+    assert len(payload.evidence) == 2 and payload.truncated is True
+    assert payload.note == (
+        f"Showing 2 results; more exist. Pass a relation to narrow the list. {DIS_1_SUMMARY}"
+    )
+
+
+def test_untruncated_neighbors_have_no_label_list():
+    payload = parse(run(make_toolset().get_neighbors("DIS_1")))
+    assert len(payload.evidence) == 4 and payload.truncated is False
+    assert payload.note is None
+
+
+def test_truncated_filtered_neighbors_have_no_label_list():
+    """With a relation given, the model has already chosen; the list would be noise."""
+    payload = parse(run(make_toolset(max_results=1).get_neighbors("DIS_1", "associated_with")))
+    assert payload.truncated is True
+    assert "edge counts" not in payload.note
+
+
+def test_size_truncated_unfiltered_neighbors_also_list_the_labels():
+    """Cut by payload size rather than by count: still truncated, still listed."""
+    ts = make_toolset(wide_store(20, name_len=400), max_payload_bytes=4_000)
+    payload = parse(run(ts.get_neighbors("HUB")))
+    assert payload.truncated is True
+    assert payload.note.endswith("This entity's relation labels, with edge counts: links (20).")
+
+
+def test_paged_truncated_unfiltered_note_has_offset_and_labels():
+    payload = parse(run(make_toolset(max_results=2, paginate=True).get_neighbors_paged("DIS_1")))
+    assert payload.note == (
+        f"Showing 2 results; more exist. Call again with offset=2 for more. {DIS_1_SUMMARY}"
+    )
+
+
+def many_relations_store(n_relations: int, label_len: int = 20) -> InMemoryEvidenceStore:
+    """A hub ``HUB`` with edges of ``n_relations`` labels: label ``i`` (0-based) has
+    ``i + 1`` edges, so counts differ and the order is known. Labels are padded to
+    ``label_len`` characters to push note size up."""
+    entities = [{"id": "HUB", "name": "Hub", "type": "gene"}]
+    edges = []
+    k = 0
+    for i in range(n_relations):
+        label = f"rel_{i:02d}_".ljust(label_len, "x")
+        for _ in range(i + 1):
+            k += 1
+            entities.append({"id": f"L{k}", "name": f"Leaf {k}", "type": "gene"})
+            edges.append(
+                {"id": f"E:{k:06d}", "subject": "HUB", "relation": label, "object": f"L{k}"}
+            )
+    return InMemoryEvidenceStore.from_records({"entities": entities, "edges": edges})
+
+
+def test_summary_caps_the_list_and_says_how_many_more():
+    ts = make_toolset(many_relations_store(6), max_relations_listed=3)
+    summary = ts.relation_summary("HUB")
+    labels = [label for label, _ in ts.relation_counts("HUB")]
+    assert labels[:3] == [f"rel_0{i}_".ljust(20, "x") for i in (5, 4, 3)]
+    assert summary == (
+        "This entity's relation labels, with edge counts: "
+        + ", ".join(f"{label} ({n})" for label, n in ts.relation_counts("HUB")[:3])
+        + ", and 3 more."
+    )
+
+
+@pytest.mark.parametrize("relation", [None, "no such relation " * 200])
+def test_relation_notes_stay_under_the_payload_cap(relation):
+    """Many long labels and the smallest allowed cap: the summary shrinks to fit, and
+    a huge model-supplied relation is cut in the echo."""
+    ts = make_toolset(
+        many_relations_store(30, label_len=60), max_payload_bytes=1_000, max_relations_listed=30
+    )
+    out = run(ts.get_neighbors("HUB", relation))
+    assert len(out.encode()) <= 1_000
+    payload = parse(out)
+    assert "edge counts" in payload.note and "more" in payload.note
+    if relation is None:
+        assert payload.truncated is True
+    else:
+        assert payload.evidence == []
+
+
+def test_default_cap_lists_every_relation_up_to_fifteen():
+    ts = make_toolset(many_relations_store(15))
+    assert "more" not in ts.relation_summary("HUB")
+    assert ts.relation_summary("HUB").count("(") == 15
+
+
+def test_long_ids_are_cut_in_error_notes():
+    ts = make_toolset()
+    for out in (run(ts.get_edge("E:" + "9" * 50_000)), run(ts.get_neighbors("X" * 50_000))):
+        assert len(out.encode()) < 1_000
+        assert "..." in parse(out).note
 
 
 def test_unexpected_exception_becomes_a_note():

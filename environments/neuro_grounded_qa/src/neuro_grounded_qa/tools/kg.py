@@ -31,7 +31,28 @@ mention IDs freely.
 back as a payload with no evidence and a ``note``. An unexpected exception inside a
 tool is logged and also returned as a note, so one bad call can't end the rollout.
 (Arguments of the wrong JSON type are rejected by the MCP layer before the tool runs;
-the model then gets the library's error text, which isn't a payload.)
+the model then gets the library's error text, which isn't a payload.) Notes repeat at
+most ``ECHO_MAX_CHARS`` characters of a model-supplied argument, so a huge argument
+can't push a note past the payload cap.
+
+**Relation summaries.** Two notes list the entity's own relation labels with their
+edge counts (:meth:`KGToolset.relation_summary`), so the model can pick a real label
+instead of guessing one:
+
+- ``get_neighbors`` with a relation label the store doesn't have ("Unknown
+  relation").
+- ``get_neighbors`` *without* a relation whose result was truncated. Edges come back
+  in store order, which on the real store groups them by relation, so an unfiltered
+  page from a well-connected entity shows only its first few relations.
+
+Labels are ordered by edge count, descending, then by label. A count is the number of
+edges touching the entity in either direction, which is what ``get_neighbors`` with
+that label would list in full. At most ``max_relations_listed`` labels are listed
+(the rest are counted, "and N more"), and the summary is also kept within a quarter of
+``max_payload_bytes``, so a note always fits the payload cap. The summaries are
+navigation aids, not evidence: they sit in ``note``, which ``retrieved_ids`` never
+reads. Smoke-run traces showed models guessing display labels ("has phenotype") or
+invented ones and spending calls on "Unknown relation" results.
 
 **Call budget.** The tool server is *shared*: one process serves every rollout of a
 run (``Taskset.toolsets``), so a counter on the server object would mix rollouts.
@@ -63,6 +84,8 @@ import asyncio
 import functools
 import inspect
 import logging
+import sys
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -95,6 +118,16 @@ directory)."""
 DEFAULT_MAX_PAYLOAD_BYTES = 16_000
 """Below verifiers 0.4.1's ``TOOL_OUTPUT_MAX_BYTES`` (20 000), with headroom."""
 
+ECHO_MAX_CHARS = 80
+"""Most characters of a model-supplied argument a note repeats back."""
+
+
+def _echo(value: str) -> str:
+    """``repr`` of a model-supplied argument for a note, cut to ``ECHO_MAX_CHARS``."""
+    if len(value) > ECHO_MAX_CHARS:
+        return repr(value[:ECHO_MAX_CHARS]) + "..."
+    return repr(value)
+
 
 class KGState(vf.State):
     """Per-rollout state shared by the task and the KG tool server.
@@ -124,6 +157,10 @@ class KGToolsetConfig(vf.SharedToolsetConfig):
     max_payload_bytes: int = Field(DEFAULT_MAX_PAYLOAD_BYTES, ge=1_000)
     """Largest payload, in UTF-8 bytes, a tool returns. Keep it under the harness's
     tool-output truncation limit, or truncated payloads will fail to parse."""
+    max_relations_listed: int = Field(15, ge=1)
+    """Most relation labels a relation summary lists for one entity; the rest are
+    counted. The real store's best-connected entity has 12 relations, so the default
+    lists every relation there is."""
 
 
 def _payload(**fields: Any) -> str:
@@ -146,6 +183,7 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
         super().__init__(config)
         self._store = store
         self._relations: frozenset[str] | None = None
+        self._relation_counts: dict[str, list[tuple[str, int]]] = {}
         self._lock = asyncio.Lock()
 
     # -- lifecycle -----------------------------------------------------------------
@@ -170,6 +208,46 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
         if self._relations is None:
             self._relations = frozenset(self.store.relations())
         return self._relations
+
+    def relation_counts(self, entity_id: str) -> list[tuple[str, int]]:
+        """``(relation, edge count)`` for every relation on ``entity_id``'s edges.
+
+        Ordered by count, descending, then by label, so the order is deterministic.
+        Counts edges touching the entity in either direction, as ``get_neighbors``
+        lists them. Cached per entity: the store doesn't change while the server
+        runs, and counting scans the entity's edges.
+        """
+        cached = self._relation_counts.get(entity_id)
+        if cached is None:
+            edges = self.store.neighbors(entity_id, None, sys.maxsize)
+            counts = Counter(edge.relation for edge in edges)
+            cached = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            self._relation_counts[entity_id] = cached
+        return cached
+
+    def relation_summary(self, entity_id: str) -> str:
+        """One sentence listing ``entity_id``'s relation labels with edge counts.
+
+        For example ``"This entity's relation labels, with edge counts:
+        disease_protein (101), contraindication (56)."``. Lists at most
+        ``max_relations_listed`` labels and says how many more there are. The sentence
+        is kept within a quarter of ``max_payload_bytes`` (dropping labels from the end
+        if needed), which leaves room for the rest of any note under the payload cap.
+        """
+        counts = self.relation_counts(entity_id)
+        if not counts:
+            return "This entity has no edges."
+        room = self.config.max_payload_bytes // 4
+        head = "This entity's relation labels, with edge counts: "
+        for shown in range(min(len(counts), self.config.max_relations_listed), 0, -1):
+            parts = [f"{label} ({n})" for label, n in counts[:shown]]
+            if (rest := len(counts) - shown) > 0:
+                parts.append(f"and {rest} more")
+            text = head + ", ".join(parts) + "."
+            if len(text.encode("utf-8")) <= room:
+                return text
+        # Not even one label fits (only with absurdly long labels): count them.
+        return f"This entity has {len(counts)} relation labels, too long to list here."
 
     def register(self, mcp: MCPServer) -> None:
         """Register the three tools, each serialized under the server-wide lock.
@@ -294,32 +372,37 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
     def _neighbors(self, entity_id: str, relation: str | None, offset: int, paged: bool) -> str:
         if self.store.entity(entity_id) is None:
             return _payload(
-                note=f"Unknown entity ID {entity_id!r}. Use an ID from search_entities."
+                note=f"Unknown entity ID {_echo(entity_id)}. Use an ID from search_entities."
             )
         if relation is not None and relation not in self.relations:
-            return _payload(
-                note=(
-                    f"Unknown relation {relation!r}. Relation labels: "
-                    + ", ".join(sorted(self.relations))
-                )
-            )
+            # The entity's own labels, not the whole vocabulary: most labels in the
+            # vocabulary have no edges on any one entity.
+            note = f"Unknown relation {_echo(relation)}. {self.relation_summary(entity_id)}"
+            if self.relation_counts(entity_id):
+                note += " Pass one of these labels exactly as written."
+            return _payload(note=note)
         if offset < 0:
             return _payload(note="offset must be 0 or more.")
         cap = self.config.max_results
         edges = self.store.neighbors(entity_id, relation, offset + cap + 1)
         page = edges[offset : offset + cap]
         more = len(edges) > offset + cap
+
         def hint(shown: int) -> str:
+            # Unfiltered and truncated: the page shows only the first relations in
+            # store order, so the note lists them all. `_fit` calls this only when
+            # the result is cut (by count or by payload size).
+            summary = "" if relation is not None else " " + self.relation_summary(entity_id)
             if paged:
-                return f"Call again with offset={offset + shown} for more."
-            return "" if relation is not None else "Pass a relation to narrow the list."
+                return f"Call again with offset={offset + shown} for more.{summary}"
+            return "" if relation is not None else f"Pass a relation to narrow the list.{summary}"
 
         return self._fit(page, "evidence", more, hint)
 
     def _edge(self, edge_id: str) -> str:
         edge = self.store.get(edge_id)
         if edge is None:
-            return _payload(note=f"No edge with ID {edge_id!r}.")
+            return _payload(note=f"No edge with ID {_echo(edge_id)}.")
         return _payload(evidence=[edge])
 
 
