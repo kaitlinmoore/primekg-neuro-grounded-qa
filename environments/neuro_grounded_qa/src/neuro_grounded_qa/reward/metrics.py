@@ -51,7 +51,8 @@ def answer_metrics(breakdown: ScoreBreakdown, retrieved_ids: set[str]) -> dict[s
       point (on ``no`` items, every supported fact).
     - ``nongold_over_allowance``: ``max(0, N − a)``, the non-gold facts the precision
       penalty charges for. 0 while an answer stays within the allowance.
-    - ``precision_penalty``: ``μ · max(0, N − a) / F`` (reward v1; 0 under v0). Like
+    - ``precision_penalty``: ``μ · max(0, N − a) / S`` (reward v1.1; ``/ F`` under v1, 0
+      under v0). Like
       ``unsupported_penalty`` it is recorded on every answer, though the aggregate
       uses neither on ``no`` items.
     - ``duplicate_claims``: claims removed by deduplication (claims stating the same

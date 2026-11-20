@@ -31,6 +31,7 @@ from neuro_grounded_qa.contracts import ParseFailure, parse_output, triple
 from neuro_grounded_qa.reward import (
     DEFAULT_PARAMS,
     V0_PARAMS,
+    V1_PARAMS,
     RewardParams,
     clip,
     precision_penalty,
@@ -114,11 +115,21 @@ def test_cite_to_unretrieved_id_is_stripped_and_claim_unsupported():
 # --- Strict citations ---------------------------------------------------------------
 
 
-def test_reward_v1_defaults():
+def test_reward_v1_1_defaults():
     assert DEFAULT_PARAMS == RewardParams(
+        lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True,
+        mu=1.0, nongold_allowance=3, version="v1.1",
+    )
+    assert DEFAULT_PARAMS.precision_over == "supported"
+
+
+def test_reward_v1_is_v1_1_over_all_facts():
+    """v1 and v1.1 share every constant; only the version, and so the denominator, differs."""
+    assert V1_PARAMS == RewardParams(
         lam=0.5, partial_flag_credit=0.2, correctable_abstain_credit=0.7, flag_only_counts=True,
         mu=1.0, nongold_allowance=3, version="v1",
     )
+    assert V1_PARAMS.precision_over == "facts" and V0_PARAMS.precision_over == "facts"
 
 
 def test_reward_v0_is_v1_without_the_precision_penalty():
@@ -444,7 +455,7 @@ def test_penalty_scales_with_lambda():
         assert b.reward == pytest.approx(1 - lam / 3)
 
 
-# --- Precision penalty (reward v1) ------------------------------------------------
+# --- Precision penalty (reward v1, v1.1) ------------------------------------------
 
 # Supported facts on the single-hop item that state no gold point (its gold is E:1, E:2).
 NONGOLD = [
@@ -492,13 +503,60 @@ def test_v0_constants_turn_the_precision_penalty_off():
 
 
 def test_precision_penalty_adds_to_the_unsupported_penalty():
-    """F counts unsupported facts too; an unsupported fact is never a non-gold fact."""
+    """An unsupported fact is never a non-gold fact. v1.1 divides the precision term by
+    the supported facts (7), v1 by every fact (8)."""
     guess = claim("GENE_D", "associated_with", "DIS_1", "E:999999")
     b = run(SINGLE, answer(GP1, GP2, guess, *NONGOLD[:5]))
-    assert (b.n_facts, b.n_unsupported, b.n_nongold_supported) == (8, 1, 5)
+    assert (b.n_facts, b.n_supported, b.n_unsupported, b.n_nongold_supported) == (8, 7, 1, 5)
     assert b.penalty == pytest.approx(0.5 / 8)
-    assert b.precision_penalty == pytest.approx(2 / 8)
-    assert b.reward == pytest.approx(1 - 0.5 / 8 - 2 / 8)
+    assert b.precision_penalty == pytest.approx(2 / 7)
+    assert b.reward == pytest.approx(1 - 0.5 / 8 - 2 / 7)
+    v1 = run(SINGLE, answer(GP1, GP2, guess, *NONGOLD[:5]), params=V1_PARAMS)
+    assert v1.precision_penalty == pytest.approx(2 / 8)
+    assert v1.reward == pytest.approx(1 - 0.5 / 8 - 2 / 8)
+
+
+# Fabricated claims: distinct facts the retrieved edges don't state (each cites a real
+# edge that states something else, so none is voided).
+def _fabricated(k: int) -> list[dict]:
+    return [claim("GENE_A", "associated_with", f"UNKNOWN:fab-{i}", "E:000001") for i in range(k)]
+
+
+def test_v1_1_precision_term_is_zero_with_no_supported_facts():
+    """S = 0: nothing supported, so N = 0 and the term is 0 rather than a division by 0."""
+    b = run(SINGLE, answer(*_fabricated(3)))
+    assert (b.n_supported, b.n_unsupported) == (0, 3)
+    assert b.precision_penalty == 0.0
+    assert b.penalty == pytest.approx(0.5)
+    assert precision_penalty(0, 0, 1.0, 0) == 0.0
+
+
+@pytest.mark.parametrize("k", [1, 5, 25, 100])
+def test_v1_1_fabricated_claims_do_not_lower_the_precision_term(k):
+    """Candidate 12, closed: under v1.1 the term stays (6 − 3) / 8 however many claims
+    are fabricated, and the reward only falls. Under v1 the same fabrications shrink the
+    term (it is divided by F) and, past a point, raise the reward."""
+    base = answer(GP1, GP2, *NONGOLD)
+    padded = answer(GP1, GP2, *NONGOLD, *_fabricated(k))
+    b0, b = run(SINGLE, base), run(SINGLE, padded)
+    assert b.n_unsupported == k and b.n_supported == b0.n_supported == 8
+    assert b.precision_penalty == b0.precision_penalty == pytest.approx(3 / 8)
+    assert b.reward < b0.reward
+    v1 = run(SINGLE, padded, params=V1_PARAMS)
+    assert v1.precision_penalty == pytest.approx(3 / (8 + k))
+    assert v1.precision_penalty < b.precision_penalty
+
+
+def test_v1_1_reward_never_rises_with_more_fabricated_claims():
+    rewards = [run(SINGLE, answer(GP1, GP2, *NONGOLD, *_fabricated(k))).reward for k in range(0, 60, 5)]
+    assert all(a >= b for a, b in zip(rewards, rewards[1:]))
+
+
+@pytest.mark.parametrize("n", [0, 3, 4, 6])
+def test_v1_1_equals_v1_with_no_unsupported_facts(n):
+    """U = 0 means S = F: the two versions give the same breakdown."""
+    text = answer(GP1, GP2, *NONGOLD[:n])
+    assert run(SINGLE, text) == run(SINGLE, text, params=V1_PARAMS)
 
 
 def test_precision_penalty_counts_duplicate_facts_once():
@@ -790,14 +848,29 @@ def test_from_record_reads_a_record_without_a_version_as_v0():
     assert RewardParams.from_record(old) == V0_PARAMS
     assert RewardParams.from_record({**old, "lam": 1.0}) == RewardParams(
         lam=1.0, mu=0.0, nongold_allowance=0, version="v0")
-    # Building the record directly would silently read it as v1.
+    # Building the record directly would silently read it as the current version.
     assert RewardParams(**old) == DEFAULT_PARAMS
 
 
-def test_from_record_round_trips_v1_and_defaults_without_a_record():
+def test_from_record_reads_a_v1_record_as_v1():
+    """A trace recorded under v1 carries ``version: "v1"`` and v1's constants, and still
+    rescores with the precision term over all facts."""
+    import dataclasses
+
+    record = dataclasses.asdict(V1_PARAMS)
+    assert record["version"] == "v1"
+    params = RewardParams.from_record(record)
+    assert params == V1_PARAMS and params.precision_over == "facts"
+    guess = claim("GENE_D", "associated_with", "DIS_1", "E:999999")
+    text = answer(GP1, GP2, guess, *NONGOLD[:5])
+    assert run(SINGLE, text, params=params).reward == pytest.approx(1 - 0.5 / 8 - 2 / 8)
+
+
+def test_from_record_round_trips_v1_1_and_defaults_without_a_record():
     import dataclasses
 
     assert RewardParams.from_record(dataclasses.asdict(DEFAULT_PARAMS)) == DEFAULT_PARAMS
+    assert DEFAULT_PARAMS.version == "v1.1"
     custom = RewardParams(mu=0.5, nongold_allowance=2)
     assert RewardParams.from_record(dataclasses.asdict(custom)) == custom
     assert RewardParams.from_record(None) == DEFAULT_PARAMS
