@@ -47,9 +47,10 @@ from qgen.selection import Plan
 
 duckdb = pytest.importorskip("duckdb")
 
-TRAIN, HELDOUT = 40, 30
-"""Fixture targets the world fills exactly (the 40% relation cap rounds to zero for
-very small type targets, so the fixture can't use tiny splits)."""
+TRAIN, HELDOUT = 60, 60
+"""Fixture targets the world fills exactly. The 40% relation cap rounds to zero for
+type targets under 3, and it applies per false-premise kind, so each split needs at
+least 3 items of each kind: about 60 items."""
 
 
 def run(*argv: str) -> tuple[int, str, str]:
@@ -136,7 +137,7 @@ def test_generate_meets_every_target_exactly(world):
 
 def test_generate_refuses_a_shortfall_and_writes_nothing(world, tmp_path):
     out = tmp_path / world.build_id
-    code, _, err = run("generate", *world.args(), "--out", str(out), "--train", "400", "--heldout", "30")
+    code, _, err = run("generate", *world.args(), "--out", str(out), "--train", "400", "--heldout", "60")
     assert code == 2 and "targets not met" in err
     assert not (out / F.MANIFEST).exists() and not (out / F.TRAIN_FILE).exists()
 
@@ -171,7 +172,7 @@ def test_check_passes_on_a_fresh_set(world):
     for r in report["splits"].values():
         assert all(c["fail"] == 0 and c["pass"] > 0 for c in r["item_checks"].values())
     code, out, _ = world.outputs["check-heldout"]
-    assert code == 0 and "heldout: 30 items" in out and "train:" not in out
+    assert code == 0 and f"heldout: {HELDOUT} items" in out and "train:" not in out
 
 
 def _tampered(world, tmp_path, edit) -> Path:
@@ -370,8 +371,14 @@ def test_shared_name_resolves_only_with_its_type(prober):
         assert not qc.name_check(prober.search, e).ok
         assert qc.typed_name_check(prober.search, e).ok
         assert qc.resolve_mention(prober.search, e) == qc.Mention(True, True, "ok")
-        assert not qc.resolve_mention(prober.search, e, allow_typed=False).ok
-    assert qc.resolve_mention(prober.search, store.entity("G_01")) == qc.Mention(True, False, "ok")
+        assert not qc.resolve_mention(prober.search, e, "strict").ok
+        assert qc.resolve_mention(prober.search, e, "typed_when_shared") == qc.Mention(True, True, "ok")
+    g = store.entity("G_01")
+    # typed_all types every mention, shared name or not
+    assert qc.resolve_mention(prober.search, g) == qc.Mention(True, True, "ok")
+    assert qc.resolve_mention(prober.search, g, "typed_when_shared") == qc.Mention(True, False, "ok")
+    with pytest.raises(ValueError):
+        qc.resolve_mention(prober.search, g, "no_such_mode")
 
 
 def test_typed_name_rule_rejects_a_same_type_duplicate(prober):
@@ -385,23 +392,48 @@ def test_typed_name_rule_rejects_a_same_type_duplicate(prober):
     assert qc.typed_name_check(search, hits[2]).ok
 
 
-def test_typed_mentions_name_the_type_in_the_question(world):
-    seen = 0
+def test_every_mention_is_typed_in_every_class(world):
+    """Typing is uniform: every named entity of every item is a typed mention, and
+    the question names its type (with "the <type> " or through the wording)."""
+    store = load_store(world.store)
+    by_class: dict = {}
     for split in ("train", "heldout"):
         for r in world.records(split):
-            typed = json.loads(r["notes"])["typed_mentions"]
-            for eid in typed:
-                seen += 1
-                word = "disease" if eid == "D_SH" else "phenotype"
-                assert f"the {word} Synthshared condition" in r["prompt"] or (
-                    word == "phenotype" and "phenotype Synthshared condition" in r["prompt"])
-            if not typed:
-                assert "Synthshared condition" not in r["prompt"]
-    assert seen
-    # Where the wording already names the type, the bare name is used, once.
+            notes = json.loads(r["notes"])
+            assert notes["naming"] == "typed_all"
+            assert notes["typed_mentions"] == notes["named"]
+            by_class.setdefault(r["answerable"], 0)
+            by_class[r["answerable"]] += 1
+            for eid in notes["named"]:
+                e = store.entity(eid)
+                shown = qt.display_name(e.name, e.type)
+                word = qt.TYPE_WORD[e.type]
+                assert f"the {word} {shown}" in r["prompt"] or f"{word} {shown}" in r["prompt"], (eid, r["id"])
+    assert set(by_class) == {"yes", "partial", "correctable", "no"}
+    manifest = json.loads((world.items / F.MANIFEST).read_text())
+    for split in ("train", "heldout"):
+        c = manifest["counts"][split]
+        assert c["typed_mentions|answerable"] == c["answerable"]
+
+
+def test_phenotype_names_are_lowercase_in_questions(world):
+    assert qt.display_name("Senile plaques", "effect/phenotype") == "senile plaques"
+    assert qt.display_name("Abnormal EEG pattern", "effect/phenotype") == "abnormal EEG pattern"
+    assert qt.display_name("T2 hyperintensity", "effect/phenotype") == "T2 hyperintensity"
+    assert qt.display_name("IgA deficiency", "effect/phenotype") == "IgA deficiency"
+    assert qt.display_name("Alzheimer disease", "disease") == "Alzheimer disease"
+    assert qt.mention("Seizure", "effect/phenotype", True) == "the phenotype seizure"
+    texts = " ".join(r["prompt"] for split in ("train", "heldout") for r in world.records(split))
+    assert "Synthpheno" not in texts and "synthpheno" in texts
+    assert "Synthdisease" in texts  # other types keep their case
+
+
+def test_wording_that_names_the_type_takes_the_bare_name():
     assert qt.wording_names_type("disease_phenotype_positive", "obj", "effect/phenotype")
     assert not qt.wording_names_type("disease_protein", "obj", "gene/protein")
-    assert qt.mention("X", "effect/phenotype", True) == "the phenotype X"
+    assert qt.evid_text("disease_phenotype_positive", qt.mention("D", "disease", True),
+                        qt.mention("Seizure", "effect/phenotype", False)) == (
+        "Which edge in the knowledge graph shows that the disease D has the phenotype seizure?")
     assert set(qt.TYPE_WORD) >= {"disease", "effect/phenotype", "gene/protein", "drug", "exposure", "pathway"}
 
 
@@ -450,8 +482,23 @@ def test_viewer_refuses_heldout(world, tmp_path):
 def test_spot_check_is_seeded_and_stratified(world):
     assert world.outputs["spot-check"][0] == 0
     text = (world.items / F.SPOT_CHECK).read_text()
-    assert "10 of 40 train items" in text and text.count("### ") == 10
+    assert f"10 of {TRAIN} train items" in text and text.count("### ") == 10
     for t in ("single_hop", "multi_hop", "unanswerable"):
         assert f"· {t} ·" in text
     assert run("spot-check", "--items", str(world.items), "--store", str(world.store), "--n", "10")[0] == 0
     assert (world.items / F.SPOT_CHECK).read_text() == text
+
+
+def test_false_premise_cap_applies_per_kind(world):
+    """No relation key takes more than 40% of a false-premise kind (``no`` and
+    ``correctable`` separately), and the caps are computed per kind."""
+    manifest = json.loads((world.items / F.MANIFEST).read_text())
+    assert manifest["plan"]["fp_cap_per_kind"] is True
+    for split in ("train", "heldout"):
+        sel = manifest["selection"][split]
+        for kind in ("false_premise:no", "false_premise:correctable"):
+            cap = sel["relation_cap"][kind]
+            assert cap == int(0.4 * sel["target"][kind]) and cap >= 1
+            used = {k: v for k, v in sel["relation_selected"].items() if k.startswith(kind + "|")}
+            assert used and max(used.values()) <= cap
+            assert sum(used.values()) == sel["target"][kind]

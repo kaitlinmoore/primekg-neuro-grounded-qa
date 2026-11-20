@@ -302,7 +302,7 @@ def parser() -> argparse.ArgumentParser:
     g.add_argument("--max-results", type=int, default=KGToolsetConfig().max_results)
     g.add_argument("--max-calls", type=int, default=KGToolsetConfig().max_calls)
     g.add_argument("--no-filters", action="store_true",
-                   help="turn off the domain filters and typed mentions (design-stage behavior)")
+                   help="design-stage rules: no domain filters, strict names (exploration only)")
     g.add_argument("--allow-shortfall", action="store_true", help="write even if a target is not met")
     g.add_argument("--force", action="store_true", help="replace an existing item set")
 

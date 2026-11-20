@@ -9,9 +9,9 @@ candidate at the first failure (stage names as in the funnel):
    mode-of-inheritance or clinical-modifier subtrees anywhere in the item, and no
    reversed-subtype premise on an edge that touches a grouped (``group:``) node;
 2. ``no_fallback``: no ``primekg:`` fallback entity;
-3. ``names``: every named entity passes the name rule, strict or type-qualified
-   (``checks.resolve_mention``); the question text is rendered here, with typed
-   mentions where the rule needs them;
+3. ``names``: every named entity passes the name rule (``checks.resolve_mention``,
+   by default the type-qualified rule with every mention typed); the question text
+   is rendered here;
 4. ``no_leak``: no answer entity's name appears in the question;
 5. ``full_graph``: absent pairs and triples really are absent from the **whole**
    PrimeKG graph, empty lists and empty chains are empty there too;
@@ -84,20 +84,29 @@ class Filters:
       is named, answered, cited or used in a premise or gap.
     - ``reversed_premise_skip_grouped``: ``fp_reversed`` premises only on subtype
       edges whose two ends are plain MONDO terms, not grouped nodes.
-    - ``typed_mentions``: allow the type-qualified name rule; off means the strict
-      rule only.
+    - ``naming``: the name rule and mention form, one of ``checks.NAMING_MODES``
+      (default ``typed_all``: every mention names the type; revision 2).
+    - ``lowercase_phenotypes``: write phenotype names in lowercase in question text
+      (``qgen_templates.display_name``; revision 2).
 
-    :meth:`none` turns all three off, which reproduces the design-stage feasibility
-    counts (the regression check for the refactor into this module).
+    :meth:`none` is the design stage (no filters, strict names), which reproduces
+    the design-stage feasibility counts. :meth:`revision1` is the first generated
+    set's rules (filters on, typed only when a name is shared, names as stored).
     """
 
     hpo_excluded_roots: tuple[str, ...] = HPO_EXCLUDED_ROOTS
     reversed_premise_skip_grouped: bool = True
-    typed_mentions: bool = True
+    naming: str = "typed_all"
+    lowercase_phenotypes: bool = True
 
     @classmethod
     def none(cls) -> Filters:
-        return cls(hpo_excluded_roots=(), reversed_premise_skip_grouped=False, typed_mentions=False)
+        return cls(hpo_excluded_roots=(), reversed_premise_skip_grouped=False, naming="strict",
+                   lowercase_phenotypes=False)
+
+    @classmethod
+    def revision1(cls) -> Filters:
+        return cls(naming="typed_when_shared", lowercase_phenotypes=False)
 
     def as_json(self) -> dict:
         return {k: list(v) if isinstance(v, tuple) else v for k, v in asdict(self).items()}
@@ -143,6 +152,7 @@ class Cand:
     # filled in by build_pool
     text: str = ""
     typed: tuple[str, ...] = ()
+    naming: str = ""
     iid: str = ""
     route: qc.Route | None = None
     route_reqs: list = field(default_factory=list)
@@ -646,6 +656,7 @@ def item_notes(c: Cand, generator_version: str) -> str:
         "group": c.group,
         "relation_key": c.tpl.relation_key,
         "named": list(c.named),
+        "naming": c.naming,
         "typed_mentions": list(c.typed),
         "route": c.route.as_notes(),
         "route_allowed": None if c.route_allowed is None else sorted(c.route_allowed),
@@ -746,7 +757,7 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
         bad = None
         for n in c.named:
             if n not in mentions:
-                mentions[n] = qc.resolve_mention(prober.search, g.entity(n), filters.typed_mentions)
+                mentions[n] = qc.resolve_mention(prober.search, g.entity(n), filters.naming)
             if not mentions[n].ok:
                 bad = mentions[n].reason
                 break
@@ -755,12 +766,16 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
             continue
         f["names"] += 1
         c.typed = tuple(n for n in c.named if mentions[n].typed)
+        c.naming = filters.naming
         typed = set(c.typed)
+        lower = filters.lowercase_phenotypes
 
-        def m(eid: str, ctx: tuple[str, str] | None = None, typed=typed) -> str:
+        def m(eid: str, ctx: tuple[str, str] | None = None, typed=typed, lower=lower) -> str:
+            # Typed entities get "the <type> " unless the slot's wording names the
+            # type already. Gap descriptions name only named entities, the same way.
             ent = g.entity(eid)
             want = eid in typed and not (ctx and qt.wording_names_type(ctx[0], ctx[1], ent.type))
-            return qt.mention(ent.name, ent.type, want)
+            return qt.mention(ent.name, ent.type, want, lower)
 
         c.text = c.render(m)
         if qc.answer_leaks(c.text, [g.name(a) for a in c.answer_ids]):

@@ -7,7 +7,8 @@ sampling" and "Split plan and held-out protection"):
   partial, unanswerable, false premise), false premises 50/50 ``no``/``correctable``;
 - disease-group quotas AD 30, PD 20, ALS 15, FTD 15 (with the FTD/ALS nodes),
   HD 12, DLB 8 percent, per split and type, by largest-remainder rounding;
-- no relation key over 40% of a type in a split;
+- no relation key over 40% of a type in a split; for false premises, 40% of each
+  kind (``no`` and ``correctable`` separately; revision 2, ``Plan.fp_cap_per_kind``);
 - split seed ``ngq-split-v1``, held-out share 1/3, held-out selected first.
 
 The split itself is not made here: each candidate's split is ``checks.split_of`` of
@@ -45,6 +46,9 @@ class Plan:
         "AD": 0.30, "PD": 0.20, "ALS": 0.15, "FTD": 0.15, "HD": 0.12, "DLB": 0.08,
     })
     relation_cap: float = 0.4
+    fp_cap_per_kind: bool = True
+    """Apply the relation cap within each false-premise kind (``no``,
+    ``correctable``) rather than over all false premises (the first set's rule)."""
     text_dup_jaccard: float = 0.9
     split_seed: str = SPLIT_SEED
     heldout_share: float = HELDOUT_SHARE
@@ -107,11 +111,13 @@ def select(cands: list[Cand], split: str, used_facts: set, used_anchors: set,
     type_tgt = subtype_targets(plan, split)
     fp_total = targets(plan)[split]["false_premise"]
     cell_tgt = {t: apportion(n, plan.group_share) for t, n in type_tgt.items()}
-    rel_cap = {t: int(plan.relation_cap * (fp_total if t.startswith("false_premise") else n))
+    joint_fp = not plan.fp_cap_per_kind
+    rel_cap = {t: int(plan.relation_cap * (fp_total if joint_fp and t.startswith("false_premise") else n))
                for t, n in type_tgt.items()}
     have_type: Counter = Counter()
     have_cell: Counter = Counter()
     have_rel: Counter = Counter()
+    have_type_rel: Counter = Counter()
     passed_over: dict[str, Counter] = defaultdict(Counter)
     toks: list[frozenset] = []
     # Scarcest cells pick first: a (type, group) cell with few candidates per slot
@@ -135,7 +141,8 @@ def select(cands: list[Cand], split: str, used_facts: set, used_anchors: set,
             continue
         t = subtype(c)
         why = None
-        rk = (c.tpl.qtype, c.tpl.relation_key)
+        # The cap's unit: the type, or (per kind) the false-premise kind.
+        rk = (c.tpl.qtype if joint_fp else t, c.tpl.relation_key)
         facts, anchors = c.facts(), frozenset(c.named)
         if have_type[t] >= type_tgt[t]:
             continue  # type full: not a shortfall reason
@@ -161,6 +168,7 @@ def select(cands: list[Cand], split: str, used_facts: set, used_anchors: set,
         have_type[t] += 1
         have_cell[(t, c.group)] += 1
         have_rel[rk] += 1
+        have_type_rel[f"{t}|{c.tpl.relation_key}"] += 1
     if not pass1:  # every candidate was taken or skipped in pass 1 with no pass 2 left
         pass1 = {"selected": dict(have_type), "passed_over": {t: dict(v) for t, v in passed_over.items()}}
     stats = {
@@ -168,6 +176,8 @@ def select(cands: list[Cand], split: str, used_facts: set, used_anchors: set,
         "selected": {t: have_type[t] for t in type_tgt},
         "cell_target": {f"{t}|{g}": n for t in type_tgt for g, n in cell_tgt[t].items()},
         "cell_selected": {f"{t}|{g}": n for (t, g), n in sorted(have_cell.items())},
+        "relation_selected": dict(sorted(have_type_rel.items())),
+        "relation_cap": rel_cap,
         "pass1": pass1,
         "pass2_passed_over": {t: dict(v) for t, v in sorted(passed_over.items())},
     }

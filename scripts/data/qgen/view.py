@@ -110,7 +110,8 @@ def render_item(item: QuestionItem, store=None) -> str:
     notes = json.loads(item.notes)
     out = [f"### `{item.id}` · {t} · `{item.template_id}` · {g}", "", f"**Question:** {item.prompt_text}", ""]
     out.append(f"- answerable: `{item.answerable}`; relation key: `{rk}`")
-    if notes.get("typed_mentions"):
+    untyped = [x for x in notes.get("named", []) if x not in notes.get("typed_mentions", [])]
+    if notes.get("typed_mentions") and untyped:  # only under the older mixed rule
         out.append("- typed mentions (name shared with another node): "
                    + ", ".join(_ent(store, x) for x in notes["typed_mentions"]))
     if item.gold_points:

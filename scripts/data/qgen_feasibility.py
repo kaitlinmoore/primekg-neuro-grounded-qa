@@ -9,8 +9,11 @@ mix, disease-group quotas, the 40% per-relation cap, fact- and anchor-disjointne
 to show whether the targets can be met and with how much headroom. It writes no
 items; ``question_set.py generate`` does, with the same code.
 
-``--no-filters`` turns off the domain filters and the type-qualified name rule
-(``Filters.none()``), which reproduces the design-stage counts.
+``--rules`` picks the rule set: ``current`` (default: domain filters, every mention
+typed, phenotypes in lowercase, false-premise cap per kind), ``revision1`` (the
+first generated set: filters, typed only when a name is shared, names as stored,
+one cap over all false premises) or ``design`` (no filters, strict names; the
+design-stage counts). ``--no-filters`` is ``--rules design``.
 
 **Output is aggregate counts only.** No question text, entity name or ID is printed
 or written: the candidates include what will become held-out items, and nobody,
@@ -182,7 +185,7 @@ def feasibility(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph,
         "heldout_share": plan.heldout_share,
         "filters": (filters or Filters()).as_json(),
         "params": {"K_LIST": K_LIST, "K_LIST2": K_LIST2, "K_BRIDGE": K_BRIDGE, "cap": cap,
-                   "relation_cap": plan.relation_cap, "headroom": plan.headroom, "group_share": plan.group_share,
+                   "relation_cap": plan.relation_cap, "fp_cap_per_kind": plan.fp_cap_per_kind, "headroom": plan.headroom, "group_share": plan.group_share,
                    "fp_correctable_share": plan.fp_correctable_share, "text_dup_jaccard": plan.text_dup_jaccard},
         "tool_config": {"max_calls": tool_config.max_calls, "max_results": tool_config.max_results,
                         "paginate": tool_config.paginate},
@@ -220,8 +223,8 @@ def main() -> None:
     ap.add_argument("duckdb", type=Path)
     ap.add_argument("--cap", type=int, default=NEAR_MISS_CAP,
                     help="most near-miss candidates per (template, seed) for absence templates")
-    ap.add_argument("--no-filters", action="store_true",
-                    help="design-stage behavior: no domain filters, strict name rule only")
+    ap.add_argument("--rules", choices=("current", "revision1", "design"), default="current")
+    ap.add_argument("--no-filters", action="store_true", help="same as --rules design")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--from-json", type=Path, default=None,
                     help="print the markdown tables from an earlier result and exit")
@@ -235,9 +238,12 @@ def main() -> None:
     edge_ids = [r["id"] for r in sf.read_jsonl(args.store / sf.EDGES)]
     index_of = {r["id"]: r["primekg_index"] for r in sf.read_jsonl(args.store / sf.ENTITY_SOURCES)}
     fg = qc.FullGraph(duckdb.connect(str(args.duckdb), read_only=True), index_of, HIERARCHY_CHILD_END)
-    filters = Filters.none() if args.no_filters else Filters()
+    rules = "design" if args.no_filters else args.rules
+    filters = {"current": Filters(), "revision1": Filters.revision1(), "design": Filters.none()}[rules]
+    plan = Plan(fp_cap_per_kind=rules == "current")
     result = feasibility(store, edge_ids, meta["config"]["seeds"], fg, meta["build_id"], args.cap,
-                         filters=filters)
+                         filters=filters, plan=plan)
+    result["rules"] = rules
     out = args.out or args.duckdb.parent / "qgen_feasibility.json"
     out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {out}", file=sys.stderr)

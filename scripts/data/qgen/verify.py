@@ -32,6 +32,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import qgen_templates as qt
 from neuro_grounded_qa.contracts import QuestionItem
 from neuro_grounded_qa.data import store_files as sf
 from pydantic import ValidationError
@@ -81,7 +82,8 @@ class Verifier:
         roots = filters.get("hpo_excluded_roots", [])
         self.excluded = fg.subtree_entities("phenotype_phenotype", "HPO", roots) if roots else set()
         self.skip_grouped = bool(filters.get("reversed_premise_skip_grouped", False))
-        self.allow_typed = bool(filters.get("typed_mentions", False))
+        self.naming = filters.get("naming", "strict")
+        self.lowercase = bool(filters.get("lowercase_phenotypes", False))
         self.split_seed = manifest["split"]["seed"]
         self.heldout_share = manifest["split"]["heldout_share"]
         self.max_calls = manifest["tool_config"]["max_calls"]
@@ -92,7 +94,7 @@ class Verifier:
             ent = self.store.entity(eid)
             if ent is None:
                 return None
-            self._mentions[eid] = qc.resolve_mention(self.prober.search, ent, self.allow_typed)
+            self._mentions[eid] = qc.resolve_mention(self.prober.search, ent, self.naming)
         return self._mentions[eid]
 
     def check_split(self, d: Path, split: str) -> tuple[dict, list[QuestionItem]]:
@@ -162,12 +164,16 @@ class Verifier:
                 named = []
             tally("route_budget", budget_ok)
             tally("route_meets", meets)
-            ok = True
+            # Every named entity passes the name rule in the set's mode, its recorded
+            # mention form matches the rule, and its displayed name is in the text.
+            ok = notes.get("naming", self.naming) == self.naming
+            typed_rec = set(notes.get("typed_mentions", []))
             for n in named:
                 mn = self._mention(n)
                 ent = self.store.entity(n)
-                if mn is None or not mn.ok or mn.typed != (n in notes.get("typed_mentions", [])) \
-                        or ent.name not in item.prompt_text:
+                shown = qt.display_name(ent.name, ent.type, self.lowercase) if ent is not None else ""
+                if mn is None or not mn.ok or mn.typed != (n in typed_rec) \
+                        or shown.casefold() not in item.prompt_text.casefold():
                     ok = False
             tally("names", ok)
             answers = {x for gp in item.gold_points for x in (gp.subject_id, gp.object_id)} - set(named)

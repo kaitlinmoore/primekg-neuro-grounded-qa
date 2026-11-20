@@ -15,8 +15,8 @@ What lives here, and why each check exists:
   model has to find the right node with ``search_entities``. A name that returns
   another node first, or that another node shares, makes the question ambiguous.
   The check runs the real tool body, so ranking and caps are exactly what a model
-  would see. A shared name is still allowed when the question names the entity's
-  type and, among the search results of that type, the name is unambiguous.
+  would see. Questions now name every entity with its type, and the rule is: among
+  the search results of the entity's type, it is first and no other shares its name.
 - **Fallback entities** (:func:`has_fallback`). The store gives ``primekg:<index>``
   IDs to the 126 nodes whose CURIE collides (mostly one gene under an old and a new
   symbol). A claim about one copy doesn't match the other, so items avoid them.
@@ -155,19 +155,33 @@ class Mention:
     reason: str
 
 
-def resolve_mention(search: Callable[[str], list[Entity]], entity: Entity, allow_typed: bool = True) -> Mention:
-    """The name rule as the generator applies it.
+NAMING_MODES = ("strict", "typed_when_shared", "typed_all")
+"""How questions name entities, in the order the rule evolved:
 
-    The strict rule (:func:`name_check`) first: if it passes, the bare name is used.
-    Otherwise, with ``allow_typed``, the type-qualified rule
-    (:func:`typed_name_check`): if it passes, the question names the type. The choice
-    depends on the entity and the store only, never on the template, so a typed
-    mention says nothing about the answer.
+- ``strict`` (design stage): bare names; :func:`name_check` must pass.
+- ``typed_when_shared`` (2026-11-19): the bare name when :func:`name_check` passes,
+  else "the <type> <name>" when :func:`typed_name_check` passes.
+- ``typed_all`` (2026-11-19, revision 2; the default): every mention names the
+  type, and :func:`typed_name_check` must pass. Typing is then uniform across
+  templates and answerability classes."""
+
+
+def resolve_mention(search: Callable[[str], list[Entity]], entity: Entity,
+                    mode: str = "typed_all") -> Mention:
+    """The name rule in one of :data:`NAMING_MODES`: may the question name
+    ``entity``, and is the mention typed?
+
+    The result depends on the entity and the store only, never on the template.
     """
+    if mode not in NAMING_MODES:
+        raise ValueError(f"unknown naming mode {mode!r}")
+    if mode == "typed_all":
+        typed = typed_name_check(search, entity)
+        return Mention(typed.ok, typed.ok, typed.reason)
     strict = name_check(search, entity)
     if strict.ok:
         return Mention(True, False, "ok")
-    if not allow_typed:
+    if mode == "strict":
         return Mention(False, False, strict.reason)
     typed = typed_name_check(search, entity)
     if typed.ok:

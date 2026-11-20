@@ -21,14 +21,19 @@ Wording rules (see "Question generation design" in ``docs/question_set_design.md
   hedging ("is it true that...") or emphasis that would hint at the answer.
 - **"Direct".** Relationship questions ask for a *direct* relation, so a path
   through a third entity is not an answer to them.
-- **Typed mentions.** An entity whose name another store node shares (mostly a
-  disease and a phenotype with one name) is named with its type, "the phenotype
-  *X*" (:func:`mention`), when a search for the name, read by type, finds it
-  unambiguously (``qgen.checks.resolve_mention``). Whether a mention is typed
-  depends on the entity alone, never on the template or the answer, so it can't
-  carry answerability. Where the wording already names the type ("has the
-  phenotype {obj}", "the pathway {x}"), the bare name is used
-  (:data:`TYPE_NAMED_BY_WORDING`).
+- **Every mention is typed** (Kaitlin, 2026-11-19, revision 2). Every entity is
+  named with its type, "the disease *X*", "the phenotype *Y*" (:func:`mention`), in
+  every template and every answerability class, so typing carries no signal. Where
+  the wording already names the type ("has the phenotype {obj}", "the pathway
+  {x}"), the slot takes the bare name (:data:`TYPE_NAMED_BY_WORDING`); that depends
+  on the template's wording only, and every wording is shared by two classes. The
+  name rule that goes with it is the type-qualified one
+  (``qgen.checks.typed_name_check``).
+- **Phenotype names in lowercase** (:func:`display_name`): HPO capitalizes its
+  labels ("Seizure"), which reads oddly mid-sentence. Only a word's leading
+  capital is lowered, and only when the rest of the word has no capital or digit,
+  so acronyms ("EEG", "FDG PET") and tokens like "T2" or "IgA" keep their case.
+  Search is case-insensitive, so the lowered name finds the same node.
 
 The phrases are the only biology-facing wording in the set; Kaitlin reviews them
 for domain correctness (open questions in the design doc).
@@ -292,9 +297,32 @@ def wording_names_type(key: str, slot: str, etype: str) -> bool:
     return etype in TYPE_NAMED_BY_WORDING.get((key, slot), frozenset())
 
 
-def mention(name: str, etype: str, typed: bool) -> str:
-    """How a question names an entity: ``name``, or ``the <type word> <name>``."""
-    return f"the {TYPE_WORD[etype]} {name}" if typed else name
+LOWERCASE_TYPES = frozenset({"effect/phenotype"})
+"""Node types whose names a question writes in lowercase (see :func:`display_name`)."""
+
+
+def _lower_word(w: str) -> str:
+    rest = w[1:]
+    if w[:1].isupper() and not any(ch.isupper() or ch.isdigit() for ch in rest):
+        return w[:1].lower() + rest
+    return w
+
+
+def display_name(name: str, etype: str, lowercase: bool = True) -> str:
+    """The name as a question writes it: lowercased for :data:`LOWERCASE_TYPES`.
+
+    Lowers a word's leading capital only when the rest of the word has no capital
+    and no digit ("Senile plaques" -> "senile plaques"; "FDG", "T2", "IgA" kept)."""
+    if not lowercase or etype not in LOWERCASE_TYPES:
+        return name
+    return " ".join(_lower_word(w) for w in name.split(" "))
+
+
+def mention(name: str, etype: str, typed: bool, lowercase: bool = True) -> str:
+    """How a question names an entity: the display name, prefixed by ``the <type
+    word>`` when ``typed``."""
+    shown = display_name(name, etype, lowercase)
+    return f"the {TYPE_WORD[etype]} {shown}" if typed else shown
 
 
 def catalog_sha256() -> str:
@@ -316,6 +344,7 @@ def catalog_sha256() -> str:
         "catalog": [asdict(t) for t in catalog()],
         "type_word": TYPE_WORD,
         "type_named_by_wording": {f"{k}|{s}": sorted(v) for (k, s), v in TYPE_NAMED_BY_WORDING.items()},
+        "lowercase_types": sorted(LOWERCASE_TYPES),
     }
     blob = json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
