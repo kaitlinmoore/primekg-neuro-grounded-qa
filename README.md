@@ -39,6 +39,16 @@ uv run vf-validate neuro-grounded-qa --runtime.type subprocess
 # Prime Inference), then runs vf-run with configs/local.toml from the repo root.
 scripts/run.sh -n 1 \
   -m <model> --client.base-url <endpoint-url> --client.api-key-var <ENV_VAR_NAME>
+
+# For example, Claude through Anthropic's OpenAI-compatible endpoint, with the key
+# in .env as NGQ_ANTHROPIC_API_KEY (never ANTHROPIC_API_KEY: Claude Code reads that
+# name and would bill its own usage to the key). run.sh loads .env itself.
+scripts/run.sh -n 1 \
+  -m claude-haiku-5-5 --client.base-url https://api.anthropic.com/v1/ \
+  --client.api-key-var NGQ_ANTHROPIC_API_KEY
+
+# Summarize a run: summary.md and summary.json next to its traces.jsonl
+uv run python scripts/analysis/summarize_run.py outputs/<run-folder>
 ```
 
 Runs use verifiers' `null` harness (set in `configs/local.toml`): the model gets only the knowledge-graph tools. The default `bash` harness would also give it a shell on the local machine, where it could read the question items, gold answers included.
