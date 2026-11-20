@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 
 import verifiers.v1 as vf
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
 
 from neuro_grounded_qa.contracts import QuestionItem, Split
 from neuro_grounded_qa.reward import GroundingRewardMixin
@@ -164,7 +164,8 @@ def load_items(
 
     Raises:
         ValueError: held-out split not allowed; a line that isn't a JSON object or
-            has no ``split``; an item that fails validation; an item whose
+            has no ``split``; an item that fails validation (the message gives field
+            paths and error codes only, never item content); an item whose
             ``build_id`` differs from ``store_build_id``; or no items in ``split``.
         FileNotFoundError: if ``path`` doesn't exist.
     """
@@ -182,13 +183,30 @@ def load_items(
                 continue
             try:
                 item = QuestionItem.model_validate(record)
-            except ValueError as e:
-                raise ValueError(f"{path}:{lineno}: invalid item: {e}") from e
+            except ValidationError as e:
+                # Field paths and error codes only: pydantic's message echoes input
+                # values, and our validators' messages name evidence IDs and
+                # relations, so either would print item content (held-out
+                # included, with allow_heldout). `from None` keeps the original
+                # error, which carries the same text, out of the traceback.
+                raise ValueError(
+                    f"{path}:{lineno}: invalid item ({validation_summary(e)}); "
+                    "details withheld so no item content is printed"
+                ) from None
             check_build_id(item, store_build_id, where=f"{path}:{lineno}")
             items.append(item)
     if not items:
         raise ValueError(f"{path}: no items in split {split!r}")
     return items
+
+
+def validation_summary(e: ValidationError) -> str:
+    """``loc:type`` for each error in ``e``: field paths and pydantic's error codes,
+    with no input values and no messages, so it is safe to print for any split."""
+    return "; ".join(
+        ".".join(str(x) for x in err.get("loc", ())) + ":" + str(err.get("type", "?"))
+        for err in e.errors(include_input=False, include_url=False, include_context=False)
+    )
 
 
 def check_build_id(item: QuestionItem, store_build_id: str | None, where: str = "") -> None:
