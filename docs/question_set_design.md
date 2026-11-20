@@ -3005,13 +3005,64 @@ written files.
 7. **Item validation.** The candidate validates as a `QuestionItem` (labels, gold
    evidence, premise, `graph_gaps`, flag consistency per relation). Validation
    errors are counted, never printed: pydantic echoes input values.
-8. **Duplicates and leakage across items.**
+8. **Gold completeness** (added 2026-11-20). The gold points are exactly the store
+   facts that answer the question under the template's answer rule: no true answer
+   missing, no non-answer included (`qgen.answers.gold_completeness`; see "Gold
+   completeness" below).
+9. **Duplicates and leakage across items.**
    - Identical question text: the later candidate is dropped.
    - At selection: no two items share a fact (gold point, premise or gap triple, by
      `fact_key`, which is equal exactly when `same_fact` holds), or the same set of
      named entities, **across both splits**. A question-token Jaccard of 0.9 or more
      with a selected item in the same split also excludes a candidate.
    - Fact-disjointness across splits also keeps a held-out item's gold out of train.
+
+### Gold completeness
+
+Reward v1 penalizes supported facts that state no gold point. That is fair only if
+an item's gold is the **complete** set of true answers the store holds; otherwise an
+honest answer naming a true answer the gold left out would be penalized as padding.
+So every template states what answers its question, as a rule per template family in
+`qgen_templates.ANSWER_RULE` (descriptions in `ANSWER_RULES`), and the generator
+checks every candidate's gold against it:
+
+| Families | Rule | The answer set (store facts) |
+|---|---|---|
+| `sh_list`, `un_list` | `list` | every edge of the clause's relation at the seed, in the clause's role for `disease_disease` |
+| `sh_list2`, `pa_list2` | `list2` | both clauses' lists (an empty clause adds nothing) |
+| `sh_evid`, `fp_evid`, `sh_evid2`, `pa_evid2` | `stated_facts` | the edges stating each asked statement: same relation and entities, in order for a hierarchy relation |
+| `fp_contra` | `opposite_fact` | the edges between the statement's entities under the opposite relation (the correction) |
+| `fp_reversed` | `reversed_fact` | the edge stating the hierarchy statement with its ends swapped (the correction) |
+| `sh_rel`, `un_rel` | `pair_any_relation` | every edge between the two named entities, under any relation |
+| `mh_bridge`, `un_bridge` | `bridge_paths` | both edges of every path *x* –*r_x*– *m* –*r_y*– *y* with the pattern's types and roles |
+
+`qgen.answers` computes the answer set from the template and the item's recorded
+template parameters (what the question text was rendered from, never the gold),
+over its own index of the store's edges, and compares it with the gold points as
+facts (`fact_key`, so two edges stating one fact count once). Gold is complete when
+no answer fact is missing from it and none of its facts is a non-answer. For `un_*`
+and `fp_evid` items the gold is empty and the rule says the store holds no answer,
+which the full-graph absence checks already establish for the whole graph. No
+template asks for a subset of its answers: lists and bridges are generated only when
+the whole list fits the gold bounds. Completeness is over the **store**, the only
+evidence a model can retrieve; a fact only in the full graph can't be cited, so it
+can't be penalized as padding.
+
+Where it runs: `build_pool` drops a failing candidate at stage `gold_complete`,
+counts it by template and reason (manifest `pool.gold_completeness_failures`), and
+`generate` prints those counts; `question_set.py check` re-runs it on written items
+(item check `gold_complete`). A template family without a rule is refused
+(`answer_rule` raises), so a new template has to state its answer set.
+
+Held-out: completeness of held-out items follows from the same code. The generator
+runs the check on every candidate of both splits, so no item set generated from now
+on can hold an item with incomplete gold, and `check-heldout` re-runs it with counts
+only. The current set was generated before the check existed: its train items were
+checked (below), its held-out items were not read, checked or counted, so for them
+completeness rests on the same shape generators that produced complete gold on all
+200 train items until `check-heldout` is run on them. During development the check
+was run on train only (`tests/data/test_real_train_gold.py`, opt-in with
+`NGQ_ITEMS_DIR`, through the train-only loader).
 
 ### Balance and sampling
 
@@ -3644,6 +3695,12 @@ directory. Not committed: the files live in
   real tool bodies, full-graph conditions, premise and gap absence, names in the
   set's naming mode, leaks, domain filters); file hashes and counts match the
   manifest; no item ID, fact or named-entity set is shared across the splits.
+- Gold completeness (the check was added on 2026-11-20, after this set was
+  generated; no item changed): `check --split train` passes `gold_complete` on all
+  200 train items, and `tests/data/test_real_train_gold.py` agrees (by family:
+  `fp_contra` 9, `fp_evid` 10, `fp_reversed` 1, `mh_bridge` 50, `pa_evid2` 24,
+  `pa_list2` 6, `sh_evid` 17, `sh_evid2` 12, `sh_rel` 31, `un_bridge` 32, `un_rel` 8;
+  train has no `sh_list`, `sh_list2` or `un_list` items). Not run on held-out.
 - Determinism: a second run gives a byte-identical manifest (so identical item-file
   hashes).
 - The taskset loads all 200 train items against the real store, with the
