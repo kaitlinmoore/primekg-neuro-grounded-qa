@@ -387,21 +387,27 @@ measures them before anything is changed.
    types (`targets`, `indicated_for`) still match reversed.
 5. **Abstain on correctable items.** Mitigated in v0: with A = 0.7, a cited correction
    (1.0) beats abstaining. The audit can still check whether 0.7 is low enough.
+6. **Sequential edge-ID probing.** After a truncated `get_neighbors` page, call
+   `get_edge` on the IDs that follow the last one shown. Seen in a real smoke-run trace.
+   It is legitimate retrieval under strict retrieval, and each probe costs a call, but
+   it reaches past the result cap, because `E:` IDs are dense and ordered by (relation,
+   subject, object). Kept on purpose (Kaitlin, 2026-11-20); the audit records it as a
+   behavior and counts it as a cheaper route to the evidence dump (1).
 
 **Closed in v0, kept as regression cases:**
 
-6. **Duplicate claims.** Repeating a supported claim (in either order, for undirected
+7. **Duplicate claims.** Repeating a supported claim (in either order, for undirected
    relations) no longer adds to |S|: duplicate facts count once. A reversed directed
    claim is a separate, unsupported fact, so it can't hide behind the correct one
    (`test_scoring.py`, "Duplicate facts").
-7. **Mixing a fabricated cite with a real one.** One bad cite voids the claim
+8. **Mixing a fabricated cite with a real one.** One bad cite voids the claim
    (`test_scoring.py`, "Strict citations"; end to end in
    `tests/integration/test_end_to_end.py`).
-8. **Trusting `root_reply`.** Only the last sampled assistant message is scored;
+9. **Trusting `root_reply`.** Only the last sampled assistant message is scored;
    `root_reply_differs` records any mismatch (`test_adapter.py`).
-9. **Cite everything.** Closed by the support check (an extra valid cite doesn't help),
+10. **Cite everything.** Closed by the support check (an extra valid cite doesn't help),
    but still visible in `citations_per_claim`.
-10. **Fabricated, typed-in and prompt-injected IDs.** Closed by strict retrieval; kept
+11. **Fabricated, typed-in and prompt-injected IDs.** Closed by strict retrieval; kept
    as regression cases (`test_adapter.py`).
 
 ## What the harness must guarantee
