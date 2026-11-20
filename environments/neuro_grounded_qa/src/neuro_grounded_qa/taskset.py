@@ -1,7 +1,9 @@
 """The taskset: question items in, tasks with the KG toolset attached out.
 
 ``NeuroGroundedQATaskset`` loads ``QuestionItem``s from a JSONL file, keeps one split,
-gives every task the system prompt below, and attaches the KG toolset
+gives every task the system prompt below (with the store's relation labels filled in,
+read from the configured store in :meth:`NeuroGroundedQATaskset.load`), and attaches
+the KG toolset
 (``tools.KGToolset``) through ``toolsets()``. With its defaults it reads the
 contracts' synthetic fixtures (``tests/fixtures/contracts/``), so the environment
 runs end to end with no graph data. The real items and store are plugged in through
@@ -48,6 +50,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +64,7 @@ from neuro_grounded_qa.tools import (
     KGState,
     KGToolset,
     KGToolsetConfig,
+    load_store,
     read_build_id,
 )
 
@@ -73,7 +77,8 @@ DEFAULT_ITEMS_PATH = "tests/fixtures/contracts/items.jsonl"
 # docs/reward_spec.md and nothing more (no question types, templates or labels).
 # tests/harness/test_system_prompt.py parses its examples with that parser and checks
 # both.
-# `{prefix}`, `{max_calls}` and `{max_results}` are filled from the config.
+# `{prefix}`, `{max_calls}` and `{max_results}` are filled from the config;
+# `{relation_labels}` from the store the config points at (see `format_relation_labels`).
 SYSTEM_PROMPT_TEMPLATE = """\
 You answer biomedical questions using only evidence from a knowledge graph. You reach the graph through three tools:
 
@@ -84,6 +89,8 @@ You answer biomedical questions using only evidence from a knowledge graph. You 
 Tool results are JSON. Each edge in a result's "evidence" list has an "id" (its evidence ID, such as E:000001), a "subject", a "relation", an "object" and "directed" (true or false). You can make at most {max_calls} tool calls, and each returns at most {max_results} items.
 
 Without a relation, {prefix}_get_neighbors on an entity with many edges returns only the edges of its first few relations; pass a relation label to list the edges of one relation.
+
+Relation labels in this graph: {relation_labels}. Pass these exactly as written.
 
 Only evidence returned by your own tool calls in this conversation counts. Background knowledge counts for nothing.
 
@@ -111,10 +118,47 @@ Choosing between an answer and an abstention:
 """
 
 
-def render_system_prompt(tools: KGToolsetConfig) -> str:
-    """The system prompt with the tool prefix and the configured limits filled in."""
+def store_relations(store_path: str | Path) -> list[str]:
+    """The relation vocabulary of the store at ``store_path``, sorted.
+
+    Loads the store with ``tools.load_store`` and reads ``relations()``, the same
+    vocabulary ``get_neighbors`` checks a relation against, so the prompt lists exactly
+    the labels the tools accept. This loads the store in the host process as well as
+    in the tool server; the real store (about 45,000 edges) takes a few seconds, once
+    per run, in ``NeuroGroundedQATaskset.load``.
+    """
+    return sorted(load_store(store_path).relations())
+
+
+def format_relation_labels(relations: Iterable[str]) -> str:
+    """Relation labels for the prompt: unique, alphabetical, each in backticks, joined
+    by commas. Backticks mark where each label starts and ends, since some labels have
+    spaces or slashes (``off-label use``, ``drug_protein/target``).
+
+    Raises:
+        ValueError: if there are no labels (a store with no edges).
+    """
+    labels = sorted(set(relations))
+    if not labels:
+        raise ValueError("the evidence store has no relation labels to list in the prompt")
+    return ", ".join(f"`{label}`" for label in labels)
+
+
+def render_system_prompt(tools: KGToolsetConfig, relations: Iterable[str]) -> str:
+    """The system prompt with the tool prefix, the configured limits and the store's
+    relation labels filled in.
+
+    Args:
+        tools: the toolset config (call budget and result cap).
+        relations: the store's relation labels, normally ``store_relations(
+            tools.store_path)``. Order doesn't matter: they're listed alphabetically.
+            The same list goes to every item, so it says nothing about any one item.
+    """
     return SYSTEM_PROMPT_TEMPLATE.format(
-        prefix=TOOL_PREFIX, max_calls=tools.max_calls, max_results=tools.max_results
+        prefix=TOOL_PREFIX,
+        max_calls=tools.max_calls,
+        max_results=tools.max_results,
+        relation_labels=format_relation_labels(relations),
     )
 
 
@@ -321,13 +365,16 @@ class NeuroGroundedQATaskset(vf.Taskset[NeuroGroundedQATask, NeuroGroundedQAConf
         """Build one task per item of the configured split, with the system prompt
         and the run's provenance.
 
+        The prompt's relation labels come from the configured store
+        (:func:`store_relations`), loaded here once per run.
+
         Refuses any item whose ``build_id`` differs from the store's (see
         "Build check" in the module docstring). ``load`` returns a list, so the whole
         file is checked before the first task reaches the runner.
         """
         cfg = self.config
-        system_prompt = render_system_prompt(cfg.tools)
         provenance = self.provenance()
+        system_prompt = render_system_prompt(cfg.tools, store_relations(cfg.tools.store_path))
         items = load_items(
             cfg.items_path,
             cfg.split,

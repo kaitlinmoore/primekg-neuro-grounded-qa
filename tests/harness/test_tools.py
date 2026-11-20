@@ -358,10 +358,13 @@ def test_paged_truncated_unfiltered_note_has_offset_and_labels():
     )
 
 
-def many_relations_store(n_relations: int, label_len: int = 20) -> InMemoryEvidenceStore:
+def many_relations_store(
+    n_relations: int, label_len: int = 20, other_label: str | None = None
+) -> InMemoryEvidenceStore:
     """A hub ``HUB`` with edges of ``n_relations`` labels: label ``i`` (0-based) has
     ``i + 1`` edges, so counts differ and the order is known. Labels are padded to
-    ``label_len`` characters to push note size up."""
+    ``label_len`` characters to push note size up. ``other_label``, if given, is added
+    on one edge between two leaves: a real label that ``HUB`` has no edges for."""
     entities = [{"id": "HUB", "name": "Hub", "type": "gene"}]
     edges = []
     k = 0
@@ -373,6 +376,8 @@ def many_relations_store(n_relations: int, label_len: int = 20) -> InMemoryEvide
             edges.append(
                 {"id": f"E:{k:06d}", "subject": "HUB", "relation": label, "object": f"L{k}"}
             )
+    if other_label is not None:
+        edges.append({"id": "E:900000", "subject": "L1", "relation": other_label, "object": "L2"})
     return InMemoryEvidenceStore.from_records({"entities": entities, "edges": edges})
 
 
@@ -409,6 +414,76 @@ def test_default_cap_lists_every_relation_up_to_fifteen():
     ts = make_toolset(many_relations_store(15))
     assert "more" not in ts.relation_summary("HUB")
     assert ts.relation_summary("HUB").count("(") == 15
+
+
+# -- a real label the entity has no edges for ----------------------------------------
+
+
+def test_real_label_absent_for_the_entity_states_absence_then_lists_labels():
+    """``has_phenotype`` is in the store's vocabulary but not on GENE_A's edges."""
+    ts = make_toolset()
+    assert "has_phenotype" in ts.relations
+    payload = parse(run(ts.get_neighbors("GENE_A", "has_phenotype")))
+    assert payload.evidence == [] and payload.truncated is False
+    assert payload.note == (
+        f"This entity has no edges with relation 'has_phenotype'. {GENE_A_SUMMARY} "
+        "Pass one of these labels exactly as written."
+    )
+    assert "Unknown relation" not in payload.note
+
+
+def test_absence_note_in_paged_mode_at_any_offset():
+    ts = make_toolset(paginate=True)
+    expected = parse(run(make_toolset().get_neighbors("GENE_A", "has_phenotype"))).note
+    for offset in (0, 5):
+        payload = parse(run(ts.get_neighbors_paged("GENE_A", "has_phenotype", offset)))
+        assert payload.evidence == [] and payload.note == expected
+
+
+def test_real_label_on_an_entity_with_no_edges():
+    """GENE_D has no edges at all: the absence sentence, then no list."""
+    payload = parse(run(make_toolset().get_neighbors("GENE_D", "targets")))
+    assert payload.evidence == [] and payload.truncated is False
+    assert payload.note == (
+        "This entity has no edges with relation 'targets'. This entity has no edges."
+    )
+
+
+def test_results_with_edges_carry_no_absence_sentence():
+    ts = make_toolset()
+    small = make_toolset(max_results=1)
+    for payload in (
+        parse(run(ts.get_neighbors("GENE_A", "member_of"))),  # filtered, untruncated
+        parse(run(small.get_neighbors("DIS_1", "associated_with"))),  # filtered, truncated
+        parse(run(ts.get_neighbors("DIS_1"))),  # unfiltered
+        parse(run(small.get_neighbors("DIS_1"))),  # unfiltered, truncated
+    ):
+        assert payload.evidence
+        assert "no edges" not in (payload.note or "")
+
+
+def test_other_empty_results_are_unchanged():
+    """No relation on an entity with no edges, and a page past the end of a label the
+    entity has, still say "No results."; an unknown label still gets the unknown note."""
+    assert parse(run(make_toolset().get_neighbors("GENE_D"))).note == "No results."
+    paged = make_toolset(paginate=True)
+    assert parse(run(paged.get_neighbors_paged("GENE_A", "member_of", 5))).note == "No results."
+    note = parse(run(make_toolset().get_neighbors("GENE_A", "has phenotype"))).note
+    assert note.startswith("Unknown relation 'has phenotype'.") and "no edges with" not in note
+
+
+def test_absence_note_stays_under_the_payload_cap():
+    """Many long labels on the entity, a very long real label it lacks, and the
+    smallest allowed cap: the summary shrinks and the echoed label is cut."""
+    far = "elsewhere_" * 500  # a real label, but not on HUB
+    store = many_relations_store(30, label_len=60, other_label=far)
+    ts = make_toolset(store, max_payload_bytes=1_000, max_relations_listed=30)
+    out = run(ts.get_neighbors("HUB", far))
+    assert len(out.encode()) <= 1_000
+    payload = parse(out)
+    assert payload.evidence == []
+    assert payload.note.startswith("This entity has no edges with relation 'elsewhere_")
+    assert "..." in payload.note and "edge counts" in payload.note and "more" in payload.note
 
 
 def test_long_ids_are_cut_in_error_notes():
