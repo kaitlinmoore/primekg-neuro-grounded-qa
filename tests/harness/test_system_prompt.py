@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
+
 from mcp.server.mcpserver import MCPServer
 
-from harness.helpers import ITEMS_PATH, make_toolset, run
+from harness.helpers import ITEMS_PATH, STORE_PATH, fixture_store, make_toolset, run
 from neuro_grounded_qa.contracts import (
     Abstain,
     Answer,
@@ -18,10 +20,16 @@ from neuro_grounded_qa.contracts import (
     parse_output,
 )
 from neuro_grounded_qa.reward import abstention_correct
-from neuro_grounded_qa.taskset import load_items, render_system_prompt
+from neuro_grounded_qa.taskset import (
+    format_relation_labels,
+    load_items,
+    render_system_prompt,
+    store_relations,
+)
 from neuro_grounded_qa.tools import TOOL_PREFIX, KGToolsetConfig
 
-PROMPT = render_system_prompt(KGToolsetConfig())
+RELATIONS = store_relations(STORE_PATH)
+PROMPT = render_system_prompt(KGToolsetConfig(), RELATIONS)
 EXAMPLES = [line for line in PROMPT.splitlines() if line.startswith("{")]
 
 
@@ -72,7 +80,7 @@ def test_prompt_names_the_registered_tools():
 
 
 def test_prompt_states_the_configured_limits():
-    prompt = render_system_prompt(KGToolsetConfig(max_calls=5, max_results=7))
+    prompt = render_system_prompt(KGToolsetConfig(max_calls=5, max_results=7), RELATIONS)
     assert "at most 5 tool calls" in prompt
     assert "at most 7 items" in prompt
 
@@ -191,3 +199,67 @@ def test_choice_rules_agree_with_the_reward():
         item = by_label[label]
         assert abstention_correct(item, abstain) is abstain_ok, label
         assert abstention_correct(item, answer) is answer_ok, label
+
+
+# -- the store's relation labels ------------------------------------------------------
+
+LABEL_LINE_PREFIX = "Relation labels in this graph: "
+LABEL_LINE_SUFFIX = ". Pass these exactly as written."
+
+
+def _label_line(prompt: str) -> str:
+    [line] = [line for line in prompt.splitlines() if line.startswith(LABEL_LINE_PREFIX)]
+    return line
+
+
+def _listed_labels(prompt: str) -> list[str]:
+    line = _label_line(prompt)
+    assert line.endswith(LABEL_LINE_SUFFIX), line
+    return re.findall(r"`([^`]+)`", line)
+
+
+def test_prompt_lists_exactly_the_stores_relation_labels():
+    """The labels are the store's vocabulary, which is what ``get_neighbors`` checks
+    a relation against, so every listed label is one the tools accept."""
+    listed = _listed_labels(PROMPT)
+    assert listed == sorted(fixture_store().relations())
+    assert set(listed) == make_toolset().relations
+    assert len(listed) == 8  # the fixture store's labels
+
+
+def test_label_line_is_the_labels_and_nothing_else():
+    line = _label_line(PROMPT)
+    expected = LABEL_LINE_PREFIX + ", ".join(f"`{r}`" for r in RELATIONS) + LABEL_LINE_SUFFIX
+    assert line == expected
+
+
+def test_label_order_is_alphabetical_whatever_the_input_order():
+    shuffled = [RELATIONS[i] for i in (3, 0, 7, 5, 1, 6, 2, 4)]
+    assert sorted(shuffled) == RELATIONS
+    for relations in (RELATIONS, list(reversed(RELATIONS)), shuffled, RELATIONS * 2):
+        assert render_system_prompt(KGToolsetConfig(), relations) == PROMPT
+
+
+def test_store_relations_reads_the_store_file():
+    assert store_relations(STORE_PATH) == RELATIONS == sorted(RELATIONS)
+
+
+def test_labels_with_spaces_and_slashes_stay_whole():
+    """Real labels include ``off-label use`` and ``drug_protein/target``: backticks
+    keep each one in one piece."""
+    text = format_relation_labels(["off-label use", "drug_protein/target", "indication"])
+    assert text == "`drug_protein/target`, `indication`, `off-label use`"
+
+
+def test_no_labels_is_an_error():
+    with pytest.raises(ValueError, match="no relation labels"):
+        format_relation_labels([])
+
+
+def test_label_line_adds_no_item_words():
+    """Same line for every item: it holds the store's labels and the fixed words
+    around them, and none of the words the neutrality tests forbid."""
+    words = _label_line(PROMPT).replace("`", " ").lower()
+    for word in ("unanswerable", "answerable", "correctable", "template", "bridge",
+                 "abstain", "question", "score", "reward"):  # fmt: skip
+        assert word not in words, word
