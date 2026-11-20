@@ -2959,14 +2959,16 @@ written files.
    same name, ignoring case. The store ranks exact matches first and breaks ties by
    name, then ID, so a second node with the same name can be second only because of
    its ID; the model can't tell them apart from the name. **Type-qualified form**
-   (added 2026-11-19, `typed_name_check`), used only when the strict form fails: the
-   question names the entity's type ("the phenotype *X*", `qgen_templates.mention`),
-   and among the same search's results *of that type*, the intended entity is first
-   and no other has the same name. The tool has no type filter, so this is the
-   search a model would read with the type in hand. Where the template's wording
-   already names the type ("has the phenotype {obj}", "in the pathway {x}"), the slot
-   keeps the bare name. Whether a mention is typed depends on the entity alone, never
-   on the template.
+   (`typed_name_check`), the rule in force since revision 2 (2026-11-19): every
+   question names every entity with its type ("the disease *X*", "the phenotype
+   *Y*", `qgen_templates.mention`), and among the same search's results *of that
+   type*, the intended entity is first and no other has the same name. The tool has
+   no type filter, so this is the search a model would read with the type in hand.
+   Where the template's wording already names the type ("has the phenotype {obj}",
+   "in the pathway {x}"), the slot keeps the bare name. Phenotype names are written
+   in lowercase, except acronyms and mixed-case tokens (`display_name`); search is
+   case-insensitive. (The first generated set typed a mention only when the strict
+   form failed; that made typed mentions more common on answerable items.)
 3. **No answer in the question.** No gold entity the question doesn't name (list
    members, bridge intermediates) appears in its text, case-insensitively on word
    boundaries (`qgen.checks.answer_leaks`).
@@ -3404,6 +3406,17 @@ Kaitlin, 2026-11-19, on the list below:
 - **Prompt hint and held-out guards:** added to the taskset prompt and the project
   settings (see `docs/changelog.md`).
 
+Revision 2 (Kaitlin, 2026-11-19, after reviewing the first generated set):
+
+- **Wording:** every entity mention is typed, in every template and class (the
+  name rule is the type-qualified one alone); phenotype names in lowercase.
+- **False premises:** the 40% relation cap applies within each kind (`no`,
+  `correctable`) separately.
+- **Shared-neighbor bridges** (`shared_phenotype`, `shared_protein`) stay as they
+  are; the smoke run reports by template family to check them.
+- **Left as is:** the relation cap's rounding, and the thin partial AD and HD
+  cells.
+
 ### Decisions for Kaitlin (as raised at design time; settled above)
 
 1. **Size.** 200 + 100 is feasible with headroom everywhere but train partial HD.
@@ -3470,6 +3483,9 @@ Kaitlin, 2026-11-19, on the list below:
 
 ### Feasibility after the filters
 
+(Revision 1 rules: names typed only when shared, as stored; one cap over all false
+premises.)
+
 `qgen_feasibility.py` on the same store and tool config, 2026-11-19, with the domain
 filters and the type-qualified name rule on (`Filters()`, the generator's default).
 Counts only; the JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
@@ -3497,7 +3513,8 @@ Counts only; the JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
   `correctable` 104 of 953 (11%), `no` 1,987 of 31,730 (6%). The rule depends on the
   entity alone, but entities aren't spread evenly over the classes (answerable items
   name seeds more often, and some seeds share a phenotype's name), so a typed
-  mention is mildly more common on answerable candidates. Open question below.
+  mention is mildly more common on answerable candidates. Settled in revision 2 by
+  typing every mention (next section).
 
 **Valid candidates per split and type, against targets**
 
@@ -3532,19 +3549,56 @@ Counts only; the JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
 Partial AD lost candidates to the HPO filter (AD's phenotype lists include
 inheritance and onset terms). Every cell still fills in pass 1.
 
+### Feasibility under the revision 2 rules
+
+Same store and tool config, 2026-11-19, with every mention typed, phenotype names
+in lowercase and the per-kind false-premise cap (`--rules current`, the default).
+The previous filtered result is kept as
+`$NGQ_DATA_DIR/derived/qgen_feasibility_rev1.json`; `--rules revision1` reproduces
+it exactly.
+
+| | Revision 1 | Revision 2 |
+|---|---|---|
+| Valid candidates | 49,003 | 49,003 |
+| Name-rule drops | 18 (9 `not_first_of_type`, 9 `shared_name_in_type`) | 18 (same) |
+| Valid candidates with every named entity typed, per class | 13% `yes`, 8% `partial`, 11% `correctable`, 6% `no` | 100% in every class |
+| Targets met in pass 1 (both splits) | yes | yes |
+
+- The pool is the same: an entity passes the type-qualified rule exactly when it
+  passed one of the earlier two forms, and item IDs don't depend on wording. Only
+  the question text changes.
+- **False-premise relation mix** (selected; cap per kind 4 in train, 2 in
+  held-out):
+
+  | Kind | Relation | Train, rev. 1 | Train, rev. 2 | Held-out, rev. 1 | Held-out, rev. 2 |
+  |---|---|---|---|---|---|
+  | correctable | `disease_phenotype_negative` | 7 | 4 | 3 | 2 |
+  | correctable | `indication` | 2 | 3 | 0 | 0 |
+  | correctable | `contraindication` | 1 | 2 | 2 | 2 |
+  | correctable | `disease_disease` (reversed subtype) | 0 | 1 | 0 | 1 |
+  | no | `disease_phenotype_positive` | 4 | 4 | 1 | 1 |
+  | no | `disease_protein` | 5 | 4 | 2 | 2 |
+  | no | `exposure_disease` | 1 | 2 | 1 | 1 |
+  | no | `disease_disease` | 0 | 0 | 1 | 1 |
+
+- Cells under 3x headroom are unchanged (partial AD in both splits, partial HD in
+  train).
+
 ## Item set
 
 Generated on 2026-11-19 by `scripts/data/question_set.py generate` (generator
-1.0.0, commit `48082fb`, clean tree) on store `primekg-2.1-6d869fa6bb10`, with the
-settled decisions above. Not committed: the files live in
+1.1.0, commit `e6560ee`, clean tree) on store `primekg-2.1-6d869fa6bb10`, with the
+settled decisions above, revision 2 included. It replaces the first set (generator
+1.0.0, commit `48082fb`; train `13c94dd5…`, held-out `7357994b…`) in the same
+directory. Not committed: the files live in
 `$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10/`.
 
 | File | Items | SHA-256 |
 |---|---|---|
-| `train.jsonl` | 200 | `13c94dd5a59b9a008b1dcd83200bb6561635be5bb1a68d092940f520d04e8bc5` |
-| `heldout.jsonl` | 100 | `7357994b638a615997caa61cc37340b9112d4cdb823de89155dff16af4cf802a` |
-| `manifest.json` | | `0c1ea9b9ba6dec9daa98c36bd0655e8f7096ec60d6886395a562a46d3dc90dfa` |
-| `train_spot_check.md` | 20 (train) | seeded sample for domain review (`spot-check`) |
+| `train.jsonl` | 200 | `caf0480d7ce00741b0bf851a844c1e7920e3979f81144c784d3b7de936831d1c` |
+| `heldout.jsonl` | 100 | `af7cac000eb7cc879b354a52aa63ce6f42b83bb101a84da86201f7eab6ee0fe7` |
+| `manifest.json` | | `bb57005e0444772e2c2c43cb50bccdf4e34e6b6516d74416c359ea3b38af291a` |
+| `train_spot_check.md` | 20 (train) | seeded sample for domain review (`spot-check`), refreshed |
 
 **Counts** (from the manifest; held-out by aggregate only)
 
@@ -3569,42 +3623,40 @@ settled decisions above. Not committed: the files live in
 - Every (type, group) cell is at its quota in both splits, filled in pass 1: no cell
   spilled. Group totals differ from the plain percentages because quotas are
   apportioned per type (largest remainder), and a split's type targets are small.
-- No relation key is over 40% of its type. The largest shares: train
-  `multi_hop|ppi_assoc` 20 of 50, `false_premise:correctable|disease_phenotype_negative`
-  7 of 10 (7 of 20 false premises, the cap's unit), held-out
-  `multi_hop|ppi_assoc` 10 of 25.
-- Items naming at least one entity with its type: train 25 of 200 (`yes` 15 of 110,
-  `correctable` 3 of 10, `partial` 3 of 30, `no` 4 of 50); held-out 12 of 100.
+- No relation key is over 40% of its type, or of its kind for false premises. The
+  largest shares: train `multi_hop|ppi_assoc` 20 of 50; held-out
+  `multi_hop|ppi_assoc` 10 of 25. False-premise mix: see "Feasibility under the
+  revision 2 rules".
+- Every item names every entity with its type (300 of 300; the manifest's
+  `typed_mentions|answerable` equals `answerable` in both splits).
 - The manifest also records each file's SHA-256 and count, counts per split × type ×
   group × relation key, the generator version and commit, the split seed and share,
   the `build_id`, the store's `build.json` SHA-256
   (`ff0fc5d4de74f378f83eaf13312e485e4578e685e29d9ffbdef2b5462cbf1c0c`), the template
-  catalog's SHA-256 (`be86b5f77fcd6ad11f73e66fe85fcf11427a2cc5a834aae623e7b4d3797faef8`),
-  the filters, plan and tool config, the selection counts and the pool's funnel.
+  catalog's SHA-256, the filters, plan and tool config, the selection counts
+  (including the relation mix and caps per type) and the pool's funnel.
 
 **Checks on the written set**
 
 - `check` (both splits) and `check-heldout`: every item check passes (schema, split
   and `build_id`, template, ID and split hash, gold points stated by store edges,
   flags, route within budget and meeting its requirements when re-run against the
-  real tool bodies, full-graph conditions, premise and gap absence, names, leaks,
-  domain filters); file hashes and counts match the manifest; no item ID, fact or
-  named-entity set is shared across the splits.
-- Determinism: a second run gives item files with the same SHA-256 and the same
-  manifest apart from `git_dirty`.
+  real tool bodies, full-graph conditions, premise and gap absence, names in the
+  set's naming mode, leaks, domain filters); file hashes and counts match the
+  manifest; no item ID, fact or named-entity set is shared across the splits.
+- Determinism: a second run gives a byte-identical manifest (so identical item-file
+  hashes).
 - The taskset loads all 200 train items against the real store, with the
   `build_id` check passing; the fixture store is refused. A `scripts/run.sh
   --dry-run True` resolves the real paths (a dry run doesn't load items).
-- Route replay (train only): an honest scripted policy per train item (search each
-  named entity, make each recorded `get_neighbors` call, then claim every gold point
-  citing its edge, flag the gaps on partial items, abstain on `no` items), run
-  through `scripts/run.sh` against the stub endpoint on the real store.
-  All 200 train items reach reward 1.000, and on every one the route's own calls
-  return every gold edge within the 8-call budget (60 single-hop, 50 multi-hop,
-  30 partial, 10 correctable: all gold retrieved and full reward; the 40
-  unanswerable and 10 `no` false-premise items have no gold, so for them the run
-  shows only that abstaining scores 1). The replay script is not committed; it
-  reuses `tests/integration/stub_endpoint.py`. Held-out items were not replayed.
+- Route replay (train only), `tests/integration/test_real_train_replay.py`: an
+  honest scripted policy per train item (search each named entity, make each
+  recorded `get_neighbors` call, then claim every gold point citing its edge, flag
+  the gaps on partial items, abstain on `no` items), run through `scripts/run.sh`
+  against the stub endpoint on the real store. It passes: all 200 train items reach
+  reward 1, and on each of the 150 items with gold the route's own calls retrieve
+  every gold edge within the 8-call budget (the 50 `no` items show only that
+  abstaining scores 1). Held-out items are not replayed.
 
 **Regenerate** (deterministic; refuses to overwrite without `--force`):
 
@@ -3612,7 +3664,14 @@ settled decisions above. Not committed: the files live in
 uv run python scripts/data/question_set.py generate --force
 uv run python scripts/data/question_set.py check --build-id primekg-2.1-6d869fa6bb10
 uv run python scripts/data/question_set.py spot-check --build-id primekg-2.1-6d869fa6bb10
+NGQ_ITEMS_DIR="$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10" \
+  uv run pytest -q tests/integration/test_real_train_replay.py
 ```
+
+The replay test is opt-in: it is skipped unless `NGQ_ITEMS_DIR` names an item-set
+directory (store: `NGQ_STORE_DIR`, default `$NGQ_DATA_DIR/store/primekg-neuro-c95`).
+It reads `train.jsonl` only, through the viewer's train-only loader, and refuses a
+file path or a train file holding a held-out record.
 
 Commands take an items directory or a build ID, never a held-out file path, so the
 project's deny rules don't block them. `view --build-id <id> [--qtype ...]
@@ -3631,24 +3690,15 @@ scripts/run.sh -m <model> --client.base-url <url> --client.api-key-var <VAR> \
 The taskset refuses the held-out split unless `--env.taskset.split heldout` comes
 with `--env.taskset.allow_heldout true`, and refuses items from another store build.
 
-**Open questions after generation** (for Kaitlin; nothing changed for them):
+**Open questions after the first set, and how they were settled** (Kaitlin,
+2026-11-19):
 
-- **Typed mentions and answerability.** Typed mentions are more common on
-  answerable items (train: 15 of 110 `yes` items, 4 of 50 `no`). The wording is
-  chosen per entity, but a model could still pick up a weak cue. Options: keep it
-  and report it; or name every entity with its type (neutral, wordier); or balance
-  typed mentions across classes at selection.
-- **Correctable premises lean on phenotypes:** 7 of the 10 train correctable items
-  are "the phenotype *P* is recorded as absent in *D*". The 40% cap counts all false
-  premises together (8 of 20), as designed; a cap within each false-premise kind
-  would spread them.
-- **Capitalized HPO names mid-sentence** ("has the phenotype Seizure", "listed as
-  kinds of Neurodegeneration"): names are used exactly as stored, which the name
-  rule relies on. Lowercasing would read better and still match, since search is
-  case-insensitive, but it changes the wording rule.
-- **Shared-neighbor bridges** (`mh_bridge`/`un_bridge` `shared_phenotype` and
-  `shared_protein`) can pair diseases with no clinical relation, as flagged at
-  design time; they are on real train items.
-- **The relation cap rounds down** (`int(0.4 × target)`), so a type target under 3
-  would get a cap of 0. Not reached at 200 + 100 (the smallest cap is 4: held-out
-  false premises, 10 in all); it matters only for small test sets.
+- Typed mentions were more common on answerable items: settled by typing every
+  mention (revision 2).
+- Correctable premises leaned on "phenotype recorded as absent" (7 of 10 in train):
+  settled by the per-kind cap (now 4 of 10).
+- Capitalized HPO names mid-sentence: settled by lowercase phenotype names.
+- Shared-neighbor bridges can pair unrelated diseases: kept; the smoke run reports
+  by template family.
+- The relation cap rounds down (`int(0.4 × target)`, 0 for targets under 3; the
+  smallest cap at 200 + 100 is 2, held-out per false-premise kind): left as is.

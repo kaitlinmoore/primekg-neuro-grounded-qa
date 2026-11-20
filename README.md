@@ -57,6 +57,7 @@ uv run python scripts/data/measure.py primekg --domain neuro   # full-graph duck
 uv run python -m neuro_grounded_qa.data.build --out "$NGQ_DATA_DIR/store/primekg-neuro-c95"   # evidence store
 uv run python scripts/data/question_set.py generate        # items/<build_id>/{train,heldout}.jsonl + manifest.json
 uv run python scripts/data/question_set.py check --build-id <build_id>   # re-check both splits (counts only)
+NGQ_ITEMS_DIR="$NGQ_DATA_DIR/items/<build_id>" uv run pytest -q tests/integration/test_real_train_replay.py   # opt-in: replay every train route through run.sh
 ```
 
 The question-set commands print counts and hashes only; the held-out file is never displayed. To run on the real data, pass `--env.taskset.items_path "$NGQ_DATA_DIR/items/<build_id>/train.jsonl"` and `--env.taskset.tools.store_path "$NGQ_DATA_DIR/store/primekg-neuro-c95"` to `scripts/run.sh`. Details: `docs/question_set_design.md` ("Evidence store", "Item set").
