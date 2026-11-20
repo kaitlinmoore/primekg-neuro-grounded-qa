@@ -36,6 +36,7 @@ from neuro_grounded_qa.data.build import HIERARCHY_CHILD_END
 from neuro_grounded_qa.tools import KGToolset, KGToolsetConfig, load_store
 
 from qgen import GENERATOR_VERSION
+from qgen.answers import Adjacency
 from qgen import checks as qc
 from qgen import files as F
 from qgen.candidates import NEAR_MISS_CAP, STAGES, Filters, build_pool
@@ -120,6 +121,14 @@ def cmd_generate(args) -> int:
         )
         generated = sum(f["generated"] for f in pool.funnel.values())
         _say(f"candidates: {generated} generated, {len(pool.valid)} pass every check")
+        gold_fail = sum(sum(v.values()) for v in pool.gold_fail.values())
+        if gold_fail:
+            # A shape generator built gold that isn't the template's complete answer
+            # set: a generator bug or a store quirk. The candidates are dropped; say
+            # where, by template ID and reason (counts only).
+            _say(f"gold completeness: {gold_fail} candidates dropped, gold differs from the "
+                 "template's answer set: " + "; ".join(
+                     f"{t} {dict(v)}" for t, v in sorted(pool.gold_fail.items())))
         chosen, sel_stats = select_splits(pool.valid, plan)
         short = shortfalls(sel_stats)
         for split in ("train", "heldout"):
@@ -171,6 +180,7 @@ def cmd_generate(args) -> int:
                 "funnel": {t: {s: pool.funnel[t][s] for s in STAGES} for t in sorted(pool.funnel)},
                 "name_failures": {t: dict(v) for t, v in sorted(pool.name_fail.items())},
                 "domain_failures": {t: dict(v) for t, v in sorted(pool.domain_fail.items())},
+                "gold_completeness_failures": {t: dict(v) for t, v in sorted(pool.gold_fail.items())},
                 "hpo_excluded_store_entities": pool.excluded_entities,
                 "typed_mentions_by_answerable": dict(sorted(pool.typed_by_answerable.items())),
                 "valid_by_answerable": dict(sorted(pool.valid_by_answerable.items())),
@@ -205,8 +215,9 @@ def cmd_check(args, splits: list[str]) -> int:
         ts = KGToolset(KGToolsetConfig(max_results=tc["max_results"], max_calls=tc["max_calls"],
                                        paginate=tc["paginate"], max_payload_bytes=tc["max_payload_bytes"]),
                        store=store)
-        directed = qc.relation_directedness(store.get(e) for e in edge_ids)
-        v = Verifier(store, qc.Prober(ts), fg, manifest, directed)
+        edges = [store.get(e) for e in edge_ids]
+        directed = qc.relation_directedness(edges)
+        v = Verifier(store, qc.Prober(ts), fg, manifest, directed, Adjacency(edges))
         report = verify(d, splits, v)
         report["store_build_json_sha256_matches"] = (
             sf.file_sha256(store_dir / sf.BUILD_JSON) == manifest["store_build_json_sha256"])
