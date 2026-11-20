@@ -44,4 +44,5 @@ default-groups = ["dev", "data"]
 testpaths = ["tests"]
 markers = [
     "integration: end-to-end runs of scripts/run.sh against the scripted stub endpoint (no model); skip with -m \"not integration\"",
+    "exploit_open: an exploit reward v0 leaves open; the test asserts what it earns now, and a fix should make it fail (tests/exploits/)",
 ]

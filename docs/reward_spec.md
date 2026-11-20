@@ -365,7 +365,8 @@ rewards into `trace.reward`; and skipping scoring for format-violation traces.
 ## Exploit candidates
 
 Seeds for the audit. Reward v0 leaves the first three **open on purpose**; the audit
-measures them before anything is changed.
+measures them before anything is changed. The v0 baseline for every candidate is in
+`docs/reward_hacking_audit.md`.
 
 **Open, for the audit:**
 
