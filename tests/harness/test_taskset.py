@@ -23,6 +23,7 @@ from neuro_grounded_qa.taskset import (
     file_sha256,
     load_items,
     render_system_prompt,
+    store_relations,
 )
 from neuro_grounded_qa.tools import KGState, KGToolset, KGToolsetConfig, read_build_id
 
@@ -55,8 +56,20 @@ def test_loads_fixture_items_as_tasks():
 
 def test_tasks_carry_the_system_prompt():
     cfg = NeuroGroundedQAConfig(items_path=ITEMS_PATH)
-    prompt = render_system_prompt(cfg.tools)
+    prompt = render_system_prompt(cfg.tools, store_relations(STORE_PATH))
     assert {t.data.system_prompt for t in NeuroGroundedQATaskset(cfg)} == {prompt}
+
+
+def test_prompt_labels_come_from_the_configured_store(tmp_path):
+    """Point the taskset at a different store and the prompt's label line follows it."""
+    records = json.loads(STORE_PATH.read_text())
+    records["edges"] = [dict(e, relation="only_label") for e in records["edges"]]
+    store = tmp_path / "one_label_store.json"
+    store.write_text(json.dumps(records))
+    cfg = NeuroGroundedQAConfig(items_path=ITEMS_PATH, tools=KGToolsetConfig(store_path=store))
+    prompts = {t.data.system_prompt for t in NeuroGroundedQATaskset(cfg)}
+    assert len(prompts) == 1
+    assert "Relation labels in this graph: `only_label`. Pass these" in prompts.pop()
 
 
 def test_filters_by_split():
