@@ -45,3 +45,49 @@ Ignoring `strict` caused no malformed tool call in this run.
   nothing about those templates.
 
 Run outputs and per-run summaries stay in `outputs/` (gitignored).
+
+## Verification run (2026-11-20)
+
+Exploratory instrument iteration on **train** items, not an evaluation. After the
+smoke run, three changes were made (see `docs/changelog.md`, 2026-11-20): the system
+prompt states when to abstain and that the final message must be the JSON object
+alone, and the KG tools' notes list an entity's relation labels with edge counts (on an
+unknown relation, and on a truncated `get_neighbors` result without a relation). The
+reward and the parser did not change. This run checked whether the changes did what
+they were meant to, and covered the bridge templates the smoke sample missed.
+
+**What ran.** The same two models, endpoint and settings as the smoke run, on 18
+train items: the smoke run's 10, plus 8 bridge items drawn with
+`scripts/analysis/select_items.py --templates` (seed `ngq-bridge-v1`): two each from
+`mh_bridge.shared_phenotype`, `mh_bridge.shared_protein`,
+`un_bridge.shared_phenotype` and `un_bridge.shared_protein`. One rollout each. No
+held-out item was loaded.
+
+**What it showed.** With one rollout per item these are observations, not effects.
+
+- The plumbing held again: every trace rescored offline to its recorded reward and
+  carried its provenance, no tool result was rejected, and no claim named a member
+  ID of a grouped node.
+- On the 10 shared items, parse failures went from 2 to 0 (Haiku). On one bridge item
+  Haiku still wrote a sentence before the JSON block, and the reply failed to parse.
+- On the 7 `answerable = "no"` items, Haiku abstained on 4 and Sonnet on 5. Haiku
+  answered the other 3 and Sonnet the other 2, each with true supported claims and the
+  gap flagged. Before the change, on the 3 such items shared with the smoke run, Haiku
+  had abstained once and Sonnet never. The remaining answers came where the graph holds
+  a closely related fact: a link to the parent disease or the disease group rather than
+  the subtype asked about, or each disease's own phenotypes when no phenotype is
+  shared.
+- "Unknown relation" results still occurred (10 across both models). Every one was
+  the first guess at a label for an entity, before any list had been shown for it, and
+  the next call on that entity used a real label.
+- On the bridge items, Sonnet scored 1.0 on all 8. Haiku had no false abstentions,
+  abstained on both shared-protein `no` items, answered both shared-phenotype `no`
+  items, and lost credit on two shared-phenotype `yes` items (the parse failure above,
+  and one answer that put both diseases' facts in a single claim). No reply commented
+  on the unusual disease pairings these templates produce. Whether the pairings distort
+  responses is left for review of the traces.
+- A model used the new edge counts to see that one edge was missing from a truncated
+  page, then fetched the next sequential edge ID directly.
+
+Run outputs, per-run summaries and the before/after comparison stay in `outputs/`
+(gitignored).

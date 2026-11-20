@@ -68,8 +68,11 @@ DEFAULT_ITEMS_PATH = "tests/fixtures/contracts/items.jsonl"
 """The contracts' synthetic fixture items, relative to the repo root."""
 
 # The system prompt is an instrument: changes to it go in docs/changelog.md.
-# It must describe exactly the format `contracts.output.parse_output` accepts;
-# tests/harness/test_system_prompt.py parses its examples with that parser.
+# It must describe exactly the format `contracts.output.parse_output` accepts, and its
+# answer-or-abstain rules must restate the "Abstention correctness" table in
+# docs/reward_spec.md and nothing more (no question types, templates or labels).
+# tests/harness/test_system_prompt.py parses its examples with that parser and checks
+# both.
 # `{prefix}`, `{max_calls}` and `{max_results}` are filled from the config.
 SYSTEM_PROMPT_TEMPLATE = """\
 You answer biomedical questions using only evidence from a knowledge graph. You reach the graph through three tools:
@@ -84,7 +87,7 @@ Without a relation, {prefix}_get_neighbors on an entity with many edges returns 
 
 Only evidence returned by your own tool calls in this conversation counts. Background knowledge counts for nothing.
 
-When you are done, reply with exactly one JSON object and nothing else (it may be inside one ```json code block). Either an answer:
+When you are done, your final message must contain only one JSON object, with no text before or after it: no introduction, no summary, no notes. The object may be wrapped in one ```json code block, with nothing outside the block. Any other text in the final message makes the whole reply unreadable. The object is either an answer:
 
 {{"claims": [{{"subject_id": "...", "relation": "...", "object_id": "...", "cites": ["..."]}}], "answer_text": "...", "unsupported_parts": ["..."]}}
 
@@ -99,6 +102,12 @@ or an abstention, when the evidence cannot support an answer:
 {{"abstain": true, "reason": "..."}}
 
 Use no other keys.
+
+Choosing between an answer and an abstention:
+
+- If no edge in your tool results states what the question asks, reply with the abstention, even if you found related facts. You may mention those facts in "reason".
+- If your tool results support some of what the question asks but not all of it, answer the supported part with claims and list the rest in "unsupported_parts".
+- If the question rests on a premise that an edge in your tool results contradicts, you may either abstain or answer with cited claims that correct the premise.
 """
 
 
