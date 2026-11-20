@@ -127,3 +127,37 @@ verification run, one rollout each. No held-out item was loaded.
   relation's edge count, and it came from the phenotype side instead.
 
 Run outputs, per-run summaries and the comparison stay in `outputs/` (gitignored).
+
+## Verification run 3 (2026-11-20)
+
+Exploratory instrument iteration on **train** items, not an evaluation. One change (see
+`docs/changelog.md`, 2026-11-20): a filtered `get_neighbors` result cut at the cap now
+gives the entity's total for that relation ("Showing 20 of 59 edges with relation
+'disease_phenotype_positive'; more exist."). Nothing else changed. The same two models,
+endpoint, settings and 18 train items as verification run 2, one rollout each. No
+held-out item was loaded.
+
+**What it showed.** With one rollout per item these are observations, not effects.
+
+- The plumbing held as before: offline rescores matched, provenance was complete, no
+  tool result was rejected.
+- Each model saw 9 filtered pages cut at 20, the same number as in run 2, and every one
+  now carried a total. On 13 of the 18 pages the next step was the same kind as in
+  run 2. Most often it was the other entity's list or the final reply.
+- The total did not stop the probing it was aimed at. On the same `yes` item, Sonnet
+  read "20 of 59", then fetched four unseen edge IDs (skipping ahead this time rather
+  than going in order). It ran out of calls before it queried the two phenotypes'
+  own lists, and abstained again (0). Haiku, as in run 2, queried the phenotypes in
+  the same turn and scored 1.0. That entity's 59 edges for the relation have
+  contiguous IDs, so the total and the first ID shown together give the exact ID
+  range.
+- Both models quoted the total in replies, in `reason` when ruling out an unseen edge
+  from the other entity's complete list, and once in `unsupported_parts` on a `yes`
+  item that still scored 1.0.
+- Six outcomes changed across the two models. Five were in traces without a cut
+  filtered page. The sixth was a Sonnet parse failure (a line of prose before the JSON)
+  on an item where the total appeared but played no part. Answer-form replies on the
+  7 `no` items went 3 → 2 (Haiku) and 2 → 2 (Sonnet); none of those traces showed a
+  total.
+
+Run outputs, per-run summaries and the comparison stay in `outputs/` (gitignored).

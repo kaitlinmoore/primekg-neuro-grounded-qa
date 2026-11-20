@@ -343,6 +343,94 @@ def test_truncated_filtered_neighbors_have_no_label_list():
     assert "edge counts" not in payload.note
 
 
+# -- filtered truncation counts ------------------------------------------------------
+
+
+def test_truncated_filtered_neighbors_note_gives_shown_of_total():
+    """DIS_1 has 2 associated_with edges; with a cap of 1 the note says 1 of 2."""
+    payload = parse(run(make_toolset(max_results=1).get_neighbors("DIS_1", "associated_with")))
+    assert len(payload.evidence) == 1 and payload.truncated is True
+    assert payload.note == "Showing 1 of 2 edges with relation 'associated_with'; more exist."
+
+
+def test_filtered_total_matches_the_relation_count_and_the_store():
+    """The total is the entity's whole count for the relation, as a full filtered
+    listing would return it, not the number left after this page."""
+    ts = make_toolset(wide_store(25))
+    payload = parse(run(ts.get_neighbors("HUB", "links")))
+    assert len(payload.evidence) == 20
+    assert len(ts.store.neighbors("HUB", "links", 100)) == 25
+    assert payload.note == "Showing 20 of 25 edges with relation 'links'; more exist."
+
+
+def test_untruncated_filtered_neighbors_carry_no_count():
+    ts = make_toolset()
+    for entity, relation in (("DIS_1", "associated_with"), ("GENE_A", "member_of")):
+        payload = parse(run(ts.get_neighbors(entity, relation)))
+        assert payload.evidence and payload.truncated is False
+        assert payload.note is None
+    # Exactly at the cap is not truncated either.
+    payload = parse(run(make_toolset(wide_store(20)).get_neighbors("HUB", "links")))
+    assert len(payload.evidence) == 20 and payload.note is None
+
+
+def test_paged_truncated_filtered_note_has_total_and_offset():
+    ts = make_toolset(wide_store(25), paginate=True, max_results=10)
+    page1 = parse(run(ts.get_neighbors_paged("HUB", "links")))
+    page2 = parse(run(ts.get_neighbors_paged("HUB", "links", 10)))
+    page3 = parse(run(ts.get_neighbors_paged("HUB", "links", 20)))
+    assert page1.note == (
+        "Showing 10 of 25 edges with relation 'links'; more exist. "
+        "Call again with offset=10 for more."
+    )
+    assert page2.note == (
+        "Showing 10 of 25 edges with relation 'links'; more exist. "
+        "Call again with offset=20 for more."
+    )
+    assert len(page3.evidence) == 5 and page3.truncated is False and page3.note is None
+
+
+def test_size_truncated_filtered_note_counts_what_fits():
+    """Cut by payload size: "shown" is what fit, the total is still the entity's."""
+    ts = make_toolset(wide_store(20, name_len=400), max_payload_bytes=4_000)
+    out = run(ts.get_neighbors("HUB", "links"))
+    assert len(out.encode()) <= 4_000
+    payload = parse(out)
+    assert 0 < len(payload.evidence) < 20 and payload.truncated is True
+    assert payload.note == (
+        f"Showing {len(payload.evidence)} of 20 edges with relation 'links'; more exist."
+    )
+
+
+def test_filtered_count_note_stays_under_the_payload_cap():
+    """A very long real label, many edges of it and the smallest allowed cap: the
+    echoed label is cut and the payload fits."""
+    long_label = "long_label_" * 20  # 220 chars: longer than the echo limit
+    entities = [{"id": "HUB", "name": "Hub", "type": "gene"}] + [
+        {"id": f"L{i}", "name": f"Leaf {i}", "type": "gene"} for i in range(1, 31)
+    ]
+    edges = [
+        {"id": f"E:{i:06d}", "subject": "HUB", "relation": long_label, "object": f"L{i}"}
+        for i in range(1, 31)
+    ]
+    store = InMemoryEvidenceStore.from_records({"entities": entities, "edges": edges})
+    ts = make_toolset(store, max_payload_bytes=1_000)
+    out = run(ts.get_neighbors("HUB", long_label))
+    assert len(out.encode()) <= 1_000
+    payload = parse(out)
+    assert 0 < len(payload.evidence) < 20 and payload.truncated is True
+    assert payload.note.startswith(f"Showing {len(payload.evidence)} of 30 edges with relation '")
+    assert "'...; more exist." in payload.note
+
+
+def test_other_truncation_notes_are_unchanged():
+    """Unfiltered pages and search keep their wording: no "of N"."""
+    unfiltered = parse(run(make_toolset(max_results=2).get_neighbors("DIS_1"))).note
+    assert unfiltered.startswith("Showing 2 results; more exist.")
+    search = parse(run(make_toolset(wide_store(30), max_results=5).search_entities("leaf"))).note
+    assert search == "Showing 5 results; more exist. Use a more specific name."
+
+
 def test_size_truncated_unfiltered_neighbors_also_list_the_labels():
     """Cut by payload size rather than by count: still truncated, still listed."""
     ts = make_toolset(wide_store(20, name_len=400), max_payload_bytes=4_000)
