@@ -643,7 +643,7 @@ def run_checks(g: Graph, prober: qc.Prober, fg: qc.FullGraph, cands: list[Cand],
                 id=iid, prompt=c.text, qtype=c.tpl.qtype, answerable=c.tpl.answerable,
                 evidence_scope="graph", gold_points=gps,
                 gold_evidence=sorted({e for gp in gps for e in gp.evidence}),
-                premise=c.premise, graph_gaps=c.gaps, source="template",
+                premise=c.premise, graph_gaps=c.gaps, source="template", build_id=build_id,
                 split=qc.split_of(iid, SPLIT_SEED, HELDOUT_SHARE), template_id=c.tpl.id, notes=notes,
             )
         except ValidationError:

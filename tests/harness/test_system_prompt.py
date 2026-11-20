@@ -96,3 +96,18 @@ def test_prompt_states_strict_citations():
 def test_prompt_directed_field_matches_the_payload():
     """The field the prompt names is the one tool payloads carry."""
     assert "directed" in EdgeEvidence.model_fields
+
+
+def test_prompt_states_the_relation_filter_hint():
+    """Unfiltered neighbor lists from a well-connected entity are cut at the result
+    cap, so they show only its first relations. The hint names the filter and that
+    cut, and nothing about answers or answerability."""
+    [hint] = [line for line in PROMPT.splitlines() if line.startswith("Without a relation")]
+    assert hint == (
+        f"Without a relation, {TOOL_PREFIX}_get_neighbors on an entity with many edges returns "
+        "only the edges of its first few relations; pass a relation label to list the edges "
+        "of one relation."
+    )
+    neutral = hint.lower()
+    for word in ("answer", "abstain", "unsupported", "question", "evidence"):
+        assert word not in neutral

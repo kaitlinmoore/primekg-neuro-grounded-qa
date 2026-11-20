@@ -6,7 +6,7 @@ import pytest
 import verifiers.v1 as vf
 from pydantic import ValidationError
 
-from contracts.builders import FIXTURES, TraceBuilder
+from contracts.builders import FIXTURES, TraceBuilder, fixture_store
 from neuro_grounded_qa.contracts import QTYPE_ANSWERABLE, GraphGap, QuestionItem
 
 
@@ -150,6 +150,26 @@ def test_id_and_prompt_not_empty(raw_items, field, value):
         QuestionItem.model_validate(bad)
 
 
+def test_fixture_items_name_the_fixture_store_build(raw_items):
+    items = [QuestionItem.model_validate(r) for r in raw_items]
+    assert {i.build_id for i in items} == {fixture_store().build_id} == {"fixture-mini-store-v1"}
+
+
+def test_build_id_required(raw_items):
+    bad = by_qtype(raw_items, "single_hop")
+    del bad["build_id"]
+    with pytest.raises(ValidationError, match="build_id"):
+        QuestionItem.model_validate(bad)
+
+
+@pytest.mark.parametrize("value", ["", " ", "\t\n"])
+def test_build_id_must_not_be_blank(raw_items, value):
+    bad = by_qtype(raw_items, "single_hop")
+    bad["build_id"] = value
+    with pytest.raises(ValidationError, match="build_id"):
+        QuestionItem.model_validate(bad)
+
+
 def test_template_id_optional(raw_items):
     raw = by_qtype(raw_items, "single_hop")
     assert QuestionItem.model_validate(raw).template_id == "fx_genes_assoc_disease"
@@ -246,6 +266,7 @@ def hierarchy_item(premise_reversed: bool = True, directed: bool = True) -> dict
                     "directed": directed},
         "source": "template",
         "split": "train",
+        "build_id": "fixture-mini-store-v1",
         "template_id": "fx_why_subtype",
         "notes": "synthetic; the premise reverses a directed hierarchy edge",
     }

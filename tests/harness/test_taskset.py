@@ -106,6 +106,70 @@ def test_line_without_split_is_an_error(tmp_path):
         load_items(bad, "train")
 
 
+# --- Build check: items and store from the same build --------------------------------
+
+
+def _store_with_build_id(tmp_path, build_id: str):
+    """A copy of the fixture store with its ``build_id`` set to ``build_id``."""
+    data = json.loads(STORE_PATH.read_text())
+    data["build_id"] = build_id
+    path = tmp_path / "store.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_matching_build_ids_load():
+    tasks = list(_taskset(items_path=ITEMS_PATH, tools=KGToolsetConfig(store_path=STORE_PATH)))
+    assert len(tasks) == 6
+    assert {t.data.build_id for t in tasks} == {read_build_id(STORE_PATH)}
+
+
+def test_mismatched_store_is_refused_naming_both_ids(tmp_path):
+    other = _store_with_build_id(tmp_path, "some-other-build")
+    cfg = NeuroGroundedQAConfig(items_path=ITEMS_PATH, tools=KGToolsetConfig(store_path=other))
+    with pytest.raises(ValueError) as err:
+        list(NeuroGroundedQATaskset(cfg))
+    msg = str(err.value)
+    assert "'fixture-mini-store-v1'" in msg  # the items' build
+    assert "'some-other-build'" in msg  # the store's build
+    assert f"{ITEMS_PATH}:1:" in msg  # where: the first mismatched line
+
+
+def test_one_mismatched_item_is_enough_to_refuse(tmp_path):
+    lines = [line for line in ITEMS_PATH.read_text().splitlines() if line.strip()]
+    stray = json.loads(lines[-1])
+    stray["build_id"] = "some-other-build"
+    items = tmp_path / "items.jsonl"
+    items.write_text("\n".join([*lines[:-1], json.dumps(stray)]) + "\n")
+    cfg = NeuroGroundedQAConfig(items_path=items, tools=KGToolsetConfig(store_path=STORE_PATH))
+    with pytest.raises(ValueError, match=rf"items.jsonl:{len(lines)}: item build_id 'some-other-build'"):
+        list(NeuroGroundedQATaskset(cfg))
+
+
+def test_mismatch_error_carries_no_item_text(tmp_path):
+    other = _store_with_build_id(tmp_path, "some-other-build")
+    with pytest.raises(ValueError) as err:
+        load_items(ITEMS_PATH, "train", store_build_id=read_build_id(other))
+    first = json.loads(ITEMS_PATH.read_text().splitlines()[0])
+    assert first["prompt"] not in str(err.value)
+    assert first["id"] not in str(err.value)
+
+
+def test_build_check_skips_other_splits(tmp_path):
+    # Lines of other splits are never validated, so their build_id isn't read either.
+    assert len(load_items(SPLITS_PATH, "train", store_build_id="fixture-mini-store-v1")) == 2
+    lines = SPLITS_PATH.read_text().splitlines()
+    heldout = json.loads(lines[1])
+    heldout["build_id"] = "some-other-build"
+    items = tmp_path / "items.jsonl"
+    items.write_text("\n".join([lines[0], json.dumps(heldout), *lines[2:]]) + "\n")
+    assert len(load_items(items, "train", store_build_id="fixture-mini-store-v1")) == 2
+
+
+def test_load_items_without_a_store_skips_the_build_check(tmp_path):
+    assert len(load_items(ITEMS_PATH, "train", store_build_id=None)) == 6
+
+
 def test_toolsets_attaches_the_kg_toolset_with_an_absolute_store_path(tmp_path, monkeypatch):
     monkeypatch.chdir(STORE_PATH.parent)
     cfg = NeuroGroundedQAConfig(tools=KGToolsetConfig(store_path="mini_store.json", max_calls=3))
