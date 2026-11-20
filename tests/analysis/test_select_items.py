@@ -59,3 +59,28 @@ def test_refuses_a_file_holding_a_non_train_record(tmp_path):
     with pytest.raises(ItemsError):
         si.select(d, 1, "s1", tmp_path / "out")
     assert not (tmp_path / "out").exists()
+
+
+def test_template_filter_stratifies_by_template(tmp_path):
+    lines = fixture_lines()
+    templates = sorted({json.loads(line)["template_id"] for line in lines})[:2]
+    sel = si.select(items_dir(tmp_path, lines), 5, "s1", tmp_path / "out", templates)
+    assert sel["stratify_by"] == "template_id"
+    assert set(sel["chosen"]) == set(templates)
+    chosen = [json.loads(line) for line in (tmp_path / "out" / "items.jsonl").read_text().splitlines()]
+    assert {c["template_id"] for c in chosen} == set(templates)
+    # Fewer items than asked: all of them, and the counts are recorded.
+    assert sel["available"] == {t: len(sel["chosen"][t]) for t in templates}
+
+
+def test_template_filter_refuses_an_unknown_template(tmp_path):
+    with pytest.raises(ValueError, match="no_such_template"):
+        si.select(items_dir(tmp_path, fixture_lines()), 2, "s1", tmp_path / "out", ["no_such_template"])
+    assert not (tmp_path / "out").exists()
+
+
+def test_default_mode_is_unchanged_by_the_template_option(tmp_path):
+    d = items_dir(tmp_path, fixture_lines())
+    a = si.select(d, 1, "s1", tmp_path / "a")
+    b = si.select(d, 1, "s1", tmp_path / "b", None)
+    assert a["chosen"] == b["chosen"] and a["stratify_by"] == "qtype"

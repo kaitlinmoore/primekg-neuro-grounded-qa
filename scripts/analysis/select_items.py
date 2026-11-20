@@ -12,13 +12,24 @@ and draws ``--per-type`` of them with ``random.Random(f"{seed}:{qtype}")``. The 
 depends only on the seed, the type and the set of IDs, so it is stable across runs
 and doesn't shift when another type's items change.
 
+With ``--templates T1 T2 ...`` it keeps only items of those template IDs and
+stratifies by template instead of by type: ``--per-type`` items from each named
+template, seeded with ``f"{seed}:{template_id}"``. A template with fewer items gives
+all it has, and ``selection.json`` records how many each had. A named template with
+no train items is an error, so a typo can't silently shrink the sample.
+
+    uv run python scripts/analysis/select_items.py \\
+        --items-dir "$NGQ_DATA_DIR/items/<build_id>" --per-type 2 --seed ngq-bridge-v1 \\
+        --templates mh_bridge.shared_phenotype un_bridge.shared_protein \\
+        --out outputs/bridge-items-<date>
+
 Writes, under ``--out``:
 
 - ``items.jsonl``: the chosen items, one JSON object per line, exactly as they
   appear in ``train.jsonl`` (pass this file to ``scripts/run.sh`` with
   ``--env.taskset.items_path``);
-- ``selection.json``: the seed, the source file's SHA-256, the chosen IDs per type,
-  and the output file's SHA-256.
+- ``selection.json``: the seed, the source file's SHA-256, the chosen IDs per type
+  (or per template), and the output file's SHA-256.
 
 Prints IDs, types and template IDs only, never question text.
 """
@@ -63,13 +74,39 @@ def stratified_ids(by_type: dict[str, list[str]], per_type: int, seed: str) -> d
     return out
 
 
-def select(items_dir: Path, per_type: int, seed: str, out_dir: Path) -> dict:
-    """Select, write ``items.jsonl`` and ``selection.json``, and return the selection."""
+def select(
+    items_dir: Path,
+    per_type: int,
+    seed: str,
+    out_dir: Path,
+    templates: list[str] | None = None,
+) -> dict:
+    """Select, write ``items.jsonl`` and ``selection.json``, and return the selection.
+
+    Args:
+        items_dir: the item-set directory; only its ``train.jsonl`` is read.
+        per_type: items to draw per stratum (type, or template with ``templates``).
+        seed: the seed string.
+        out_dir: where to write.
+        templates: if given, keep only these template IDs and stratify by template.
+
+    Raises:
+        ValueError: a named template has no train items.
+    """
     train_file = items_dir / "train.jsonl"
     items = load_train(items_dir)  # refuses anything that isn't train
     by_type: dict[str, list[str]] = defaultdict(list)
-    for item in items:
-        by_type[item.qtype].append(item.id)
+    if templates:
+        wanted_templates = set(templates)
+        for item in items:
+            if item.template_id in wanted_templates:
+                by_type[item.template_id].append(item.id)
+        missing = sorted(wanted_templates - by_type.keys())
+        if missing:
+            raise ValueError(f"no train items for template(s): {', '.join(missing)}")
+    else:
+        for item in items:
+            by_type[item.qtype].append(item.id)
     chosen = stratified_ids(by_type, per_type, seed)
     wanted = {i for ids in chosen.values() for i in ids}
 
@@ -86,6 +123,8 @@ def select(items_dir: Path, per_type: int, seed: str, out_dir: Path) -> dict:
     selection = {
         "seed": seed,
         "per_type": per_type,
+        "stratify_by": "template_id" if templates else "qtype",
+        "available": {k: len(v) for k, v in sorted(by_type.items())},
         "source": str(train_file),
         "source_sha256": sha256_file(train_file),
         "build_id": items[0].build_id,
@@ -104,11 +143,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--per-type", type=int, default=2)
     ap.add_argument("--seed", default="ngq-smoke-v1")
     ap.add_argument("--out", type=Path, required=True, help="output directory")
+    ap.add_argument("--templates", nargs="+", default=None, metavar="TEMPLATE_ID",
+                    help="keep only these template IDs and draw --per-type from each")
     args = ap.parse_args(argv)
-    sel = select(args.items_dir, args.per_type, args.seed, args.out)
-    for qtype, rows in sel["chosen"].items():
+    sel = select(args.items_dir, args.per_type, args.seed, args.out, args.templates)
+    for group, rows in sel["chosen"].items():
+        if len(rows) < args.per_type:
+            print(f"{group}: only {len(rows)} train item(s), taking all")
         for row in rows:
-            print(f"{qtype:14} {row['id']}  {row['template_id']}")
+            print(f"{group:14} {row['id']}  {row['template_id']}")
     print(f"{sel['n_items']} items -> {args.out / 'items.jsonl'} (sha256 {sel['items_sha256'][:12]}…)")
     return 0
 
