@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(~/data/ngq/items/**/heldout.jsonl)",
+      "Read(//**/heldout.jsonl)",
+      "Bash(cat *heldout.jsonl*)",
+      "Bash(head *heldout.jsonl*)",
+      "Bash(tail *heldout.jsonl*)",
+      "Bash(less *heldout.jsonl*)",
+      "Bash(more *heldout.jsonl*)",
+      "Bash(jq *heldout.jsonl*)",
+      "Bash(python *heldout.jsonl*)",
+      "Bash(python3 *heldout.jsonl*)",
+      "Bash(uv run *heldout.jsonl*)",
+      "Bash(sed *heldout.jsonl*)",
+      "Bash(awk *heldout.jsonl*)",
+      "Bash(grep *heldout.jsonl*)",
+      "Bash(rg *heldout.jsonl*)",
+      "Bash(cut *heldout.jsonl*)",
+      "Bash(sort *heldout.jsonl*)",
+      "Bash(nl *heldout.jsonl*)",
+      "Bash(tac *heldout.jsonl*)",
+      "Bash(diff *heldout.jsonl*)",
+      "Bash(xxd *heldout.jsonl*)",
+      "Bash(od *heldout.jsonl*)",
+      "Bash(strings *heldout.jsonl*)"
+    ]
+  }
+}
