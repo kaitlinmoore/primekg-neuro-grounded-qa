@@ -17,7 +17,9 @@ without trusting the generator's in-memory state:
   absent from the full graph (as a triple, and as a pair for ``no`` items) and gap
   triples are absent as pairs; every named entity passes the name rule with the
   recorded mention form and its name is in the question; no answer entity's name is
-  in the question; no entity is in an excluded HPO subtree;
+  in the question; no entity is in an excluded HPO subtree; the gold points are
+  exactly the store facts that answer the question under its template's answer rule
+  (``qgen.answers``; ``gold_complete``);
 - **across splits** (when both are checked): no shared item ID, fact or
   named-entity set.
 
@@ -38,13 +40,14 @@ from neuro_grounded_qa.data import store_files as sf
 from pydantic import ValidationError
 
 from qgen import checks as qc
+from qgen.answers import Adjacency, gold_completeness
 from qgen.candidates import GROUP_PREFIX
 from qgen.files import SPLIT_FILES, item_counts, template_relation_keys
 
 ITEM_CHECKS = (
     "json", "schema", "split_field", "build_id", "template", "notes", "item_id", "split_hash",
     "gold_points", "triple_flags", "route_budget", "route_meets", "full_graph", "premise_gap_absent",
-    "names", "no_leak", "domain",
+    "names", "no_leak", "domain", "gold_complete",
 )
 
 
@@ -68,11 +71,14 @@ def item_facts(item: QuestionItem) -> frozenset:
 
 
 class Verifier:
-    """Checks item files against one store and the full graph."""
+    """Checks item files against one store and the full graph.
+
+    ``adjacency`` indexes the store's edges for the gold-completeness check."""
 
     def __init__(self, store, prober: qc.Prober, fg: qc.FullGraph, manifest: dict,
-                 directed_by_rel: dict[str, bool]) -> None:
+                 directed_by_rel: dict[str, bool], adjacency: Adjacency) -> None:
         self.store = store
+        self.adjacency = adjacency
         self.prober = prober
         self.fg = fg
         self.manifest = manifest
@@ -185,6 +191,7 @@ class Verifier:
                 dom_ok = dom_ok and not any(x.startswith(GROUP_PREFIX)
                                             for x in (item.premise.subject_id, item.premise.object_id))
             tally("domain", dom_ok)
+            tally("gold_complete", gold_completeness(item, notes["template_params"], self.adjacency).ok)
 
         # full-graph conditions, batched over the file
         fg_ok = self._full_graph(items, notes_of)

@@ -9,6 +9,8 @@ turns templates into checked items lives here, and both the generator
   flags, split hash, item IDs, leaks);
 - :mod:`qgen.candidates`: the shape generators, the domain filters and the check
   pipeline (:func:`qgen.candidates.build_pool`);
+- :mod:`qgen.answers`: gold completeness, each item's answer set recomputed from
+  the store under its template's answer rule;
 - :mod:`qgen.selection`: the targets and the seeded selection, held-out first;
 - :mod:`qgen.files`: the item files, counts and manifest;
 - :mod:`qgen.verify`: the re-check of written files (counts only);

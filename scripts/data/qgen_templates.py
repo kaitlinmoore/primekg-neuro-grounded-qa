@@ -263,6 +263,93 @@ def catalog() -> tuple[Template, ...]:
 
 
 # --------------------------------------------------------------------------------------
+# Answer sets: what counts as a true answer to each template's question
+# --------------------------------------------------------------------------------------
+
+ANSWER_RULES: dict[str, str] = {
+    # rule -> the store facts that answer a question under it. Each item's gold must
+    # be exactly these facts (``qgen.answers``), compared as facts (``same_fact``).
+    "list": (
+        "every store edge of the list's relation at the named seed, in the clause's "
+        "role for disease_disease (children: the seed is the parent; parents: the "
+        "seed is the child)"
+    ),
+    "list2": "both clauses' lists, each as under 'list'; an empty clause adds nothing",
+    "stated_facts": (
+        "every store edge stating one of the asked statements: same relation, same two "
+        "entities, in order for a directed relation. sh_evid and fp_evid ask one "
+        "statement, the evid2 templates two"
+    ),
+    "opposite_fact": (
+        "every store edge between the statement's two entities under the relation "
+        "opposite to the asked one (qgen_templates.OPPOSITE): the facts that correct "
+        "the premise"
+    ),
+    "reversed_fact": (
+        "every store edge stating the asked hierarchy statement with its ends swapped "
+        "(the child really is the subtype of the parent): the fact that corrects the "
+        "premise"
+    ),
+    "pair_any_relation": (
+        "every store edge between the two named entities, under any relation: the "
+        "question asks what direct relation the graph records"
+    ),
+    "bridge_paths": (
+        "both edges of every store path x -r_x- m -r_y- y, with the pattern's relations, "
+        "the intermediate's type and its hierarchy roles (qgen_templates.Bridge)"
+    ),
+}
+"""Answer-set rules, by name. :data:`ANSWER_RULE` assigns one to every template."""
+
+ANSWER_RULE: dict[str, str] = {
+    # template family (the part of the template ID before the dot) -> answer rule
+    "sh_list": "list",
+    "un_list": "list",
+    "sh_list2": "list2",
+    "pa_list2": "list2",
+    "sh_evid": "stated_facts",
+    "fp_evid": "stated_facts",
+    "sh_evid2": "stated_facts",
+    "pa_evid2": "stated_facts",
+    "fp_contra": "opposite_fact",
+    "fp_reversed": "reversed_fact",
+    "sh_rel": "pair_any_relation",
+    "un_rel": "pair_any_relation",
+    "mh_bridge": "bridge_paths",
+    "un_bridge": "bridge_paths",
+}
+"""What "the complete answer" is for each template family, as a rule from
+:data:`ANSWER_RULES`. The generator checks every candidate's gold against it
+(``qgen.answers.gold_completeness``) and refuses a candidate whose gold misses a true
+answer or holds a non-answer; ``question_set.py check`` re-checks written items.
+
+Every family in :func:`catalog` must have an entry, so a new template has to say
+what answers it; :func:`answer_rule` raises for one that doesn't. No current
+template asks for a subset of its answers (lists and bridges are generated only when
+the whole list fits the gold bounds), so there is no "subset" rule.
+
+``un_*`` and ``fp_evid`` items have no gold: the rule then says the store holds no
+answer, which the full-graph absence checks already establish for the whole graph.
+
+Not part of :func:`catalog_sha256`: the hash ties an item set to the wording and
+templates it was generated from, and these rules decide only which candidates pass,
+like the other checks (recorded through the generator version and commit)."""
+
+
+def family(template_id: str) -> str:
+    """The family of a template ID: ``sh_list`` for ``sh_list.indication``."""
+    return template_id.split(".", 1)[0]
+
+
+def answer_rule(template_id: str) -> str:
+    """The answer-set rule for a template. Raises KeyError for a family without one."""
+    fam = family(template_id)
+    if fam not in ANSWER_RULE:
+        raise KeyError(f"template family {fam!r} has no answer rule (qgen_templates.ANSWER_RULE)")
+    return ANSWER_RULE[fam]
+
+
+# --------------------------------------------------------------------------------------
 # Typed mentions
 # --------------------------------------------------------------------------------------
 

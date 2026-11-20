@@ -204,6 +204,17 @@ def test_check_heldout_catches_a_premise_present_in_the_full_graph(world, tmp_pa
     assert code == 1 and "premise_gap_absent" in out
 
 
+def test_check_heldout_catches_incomplete_gold(world, tmp_path):
+    def drop(recs):  # leave out one true answer of a list or bridge item
+        r = next(r for r in recs if len(r["gold_points"]) > 1 and r["answerable"] == "yes"
+                 and r["template_id"].split(".")[0] in ("sh_list", "mh_bridge"))
+        r["gold_points"] = r["gold_points"][1:]
+        r["gold_evidence"] = sorted({e for gp in r["gold_points"] for e in gp["evidence"]})
+    d = _tampered(world, tmp_path, drop)
+    code, out, _ = run("check-heldout", *world.args(), "--items", str(d))
+    assert code == 1 and "'gold_complete': 1" in out
+
+
 def test_check_refuses_a_file_path(world):
     code, _, err = run("check-heldout", *world.args(), "--items", str(world.items / F.HELDOUT_FILE))
     assert code == 2 and "directory" in err
