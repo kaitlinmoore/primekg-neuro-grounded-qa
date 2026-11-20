@@ -20,7 +20,10 @@ candidate at the first failure (stage names as in the funnel):
 7. ``route``: a route of real tool calls, within the budget, returns every gold
    edge and makes every absence visible;
 8. ``item_valid``: the candidate validates as a ``QuestionItem``;
-9. ``unique_text``: its question text is not identical to an earlier candidate's.
+9. ``gold_complete``: its gold points are exactly the store facts that answer its
+   question under the template's answer rule (``qgen.answers``): no true answer
+   missing, no non-answer included;
+10. ``unique_text``: its question text is not identical to an earlier candidate's.
 
 The generator (``question_set.py generate``) and the feasibility script both call
 :func:`build_pool`, so the feasibility counts and the written items rest on one
@@ -49,6 +52,7 @@ from neuro_grounded_qa.contracts import (
 from neuro_grounded_qa.tools import KGToolset, KGToolsetConfig
 from pydantic import ValidationError
 
+from qgen import answers as qa
 from qgen import checks as qc
 
 K_LIST = 5
@@ -70,7 +74,7 @@ PrimeKG's unpadded HPO source ID."""
 
 STAGES = (
     "generated", "domain", "no_fallback", "names", "no_leak", "full_graph", "flags", "route",
-    "item_valid", "unique_text",
+    "item_valid", "gold_complete", "unique_text",
 )
 """The funnel's stages, in check order (``unique_text`` survivors are valid)."""
 
@@ -675,8 +679,8 @@ class Pool:
     """The checked candidate pool, with aggregate counts only.
 
     ``valid`` holds candidates that passed every stage, each with its built
-    ``item``. Everything else is a count: per-template funnel, name-rule and domain
-    failures by reason, route lengths, and (``typed_by_answerable``) how many valid
+    ``item``. Everything else is a count: per-template funnel, name-rule, domain and
+    gold-completeness failures by reason, route lengths, and (``typed_by_answerable``) how many valid
     candidates of each answerability class use at least one typed mention, so the
     neutrality of typed mentions can be checked in aggregate.
     """
@@ -685,6 +689,7 @@ class Pool:
     funnel: dict[str, Counter]
     name_fail: dict[str, Counter]
     domain_fail: dict[str, Counter]
+    gold_fail: dict[str, Counter]
     route_calls: Counter
     typed_by_answerable: Counter
     valid_by_answerable: Counter
@@ -714,6 +719,7 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
     ts = KGToolset(tool_config or KGToolsetConfig(), store=store)
     prober = qc.Prober(ts)
     directed_by_rel = qc.relation_directedness(g.edges)
+    adj = qa.Adjacency(g.edges)
     excluded: set[str] = set()
     if filters.hpo_excluded_roots:
         excluded = fg.subtree_entities("phenotype_phenotype", "HPO", filters.hpo_excluded_roots)
@@ -722,6 +728,7 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
     funnel: dict[str, Counter] = defaultdict(Counter)
     name_fail: dict[str, Counter] = defaultdict(Counter)
     domain_fail: dict[str, Counter] = defaultdict(Counter)
+    gold_fail: dict[str, Counter] = defaultdict(Counter)
     route_calls: Counter = Counter()
     typed_by_answerable: Counter = Counter()
     valid_by_answerable: Counter = Counter()
@@ -825,6 +832,11 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
             # Never print the error: pydantic echoes input values (item text).
             continue
         f["item_valid"] += 1
+        complete = qa.gold_completeness(c.item, list(c.params), adj)
+        if not complete.ok:
+            gold_fail[c.tpl.id][complete.reason] += 1
+            continue
+        f["gold_complete"] += 1
         if c.text in seen_text:
             continue
         seen_text.add(c.text)
@@ -833,6 +845,6 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
         if c.typed:
             typed_by_answerable[c.tpl.answerable] += 1
         out.append(c)
-    pool = Pool(out, funnel, name_fail, domain_fail, route_calls, typed_by_answerable,
+    pool = Pool(out, funnel, name_fail, domain_fail, gold_fail, route_calls, typed_by_answerable,
                 valid_by_answerable, len(excluded))
     return pool, g, prober
