@@ -35,12 +35,18 @@ the model then gets the library's error text, which isn't a payload.) Notes repe
 most ``ECHO_MAX_CHARS`` characters of a model-supplied argument, so a huge argument
 can't push a note past the payload cap.
 
-**Relation summaries.** Two notes list the entity's own relation labels with their
+**Relation summaries.** Three notes list the entity's own relation labels with their
 edge counts (:meth:`KGToolset.relation_summary`), so the model can pick a real label
 instead of guessing one:
 
 - ``get_neighbors`` with a relation label the store doesn't have ("Unknown
   relation").
+- ``get_neighbors`` with a label the store has but the entity has no edges for. The
+  note first states the absence ("This entity has no edges with relation '...'."),
+  then lists the labels; an entity with no edges at all gets "This entity has no
+  edges." instead of a list. Before this note the result was a bare "No results.",
+  which doesn't tell a wrong label from a missing edge. The same note appears in
+  paged mode, at any offset, since the absence doesn't depend on the page.
 - ``get_neighbors`` *without* a relation whose result was truncated. Edges come back
   in store order, which on the real store groups them by relation, so an unfiltered
   page from a well-connected entity shows only its first few relations.
@@ -383,6 +389,18 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
             return _payload(note=note)
         if offset < 0:
             return _payload(note="offset must be 0 or more.")
+        if relation is not None and relation not in dict(self.relation_counts(entity_id)):
+            # A real label this entity has no edges for. Without this note the result
+            # is a bare "No results.", which doesn't say whether the label was wrong or
+            # the edge is absent. Absence first (that is the answer to the call), then
+            # the entity's own labels so the next call can use one of them.
+            note = (
+                f"This entity has no edges with relation {_echo(relation)}. "
+                f"{self.relation_summary(entity_id)}"
+            )
+            if self.relation_counts(entity_id):
+                note += " Pass one of these labels exactly as written."
+            return _payload(note=note)
         cap = self.config.max_results
         edges = self.store.neighbors(entity_id, relation, offset + cap + 1)
         page = edges[offset : offset + cap]
