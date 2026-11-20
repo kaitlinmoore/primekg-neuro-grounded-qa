@@ -1,9 +1,10 @@
 """The question templates: wording, shape and relations, as data.
 
 Each template is one question pattern. Its **shape** says how candidates are drawn
-from the store and how gold is computed (``qgen_feasibility.py`` implements the
-shapes; the generator will reuse it). The **text** names entities only by name,
-through ``{slots}``; IDs never appear in a question.
+from the store and how gold is computed (``qgen/candidates.py`` implements the
+shapes; the generator and the feasibility script share it). The **text** names
+entities only by name, through ``{slots}``; IDs never appear in a question. This file
+is the single template catalog: every wording the question set uses is here.
 
 Wording rules (see "Question generation design" in ``docs/question_set_design.md``):
 
@@ -14,20 +15,35 @@ Wording rules (see "Question generation design" in ``docs/question_set_design.md
   (unanswerable); ``evid2`` and ``list2`` read the same when both parts or one part
   are supported (single-hop vs partial).
 - **No answer in the question.** List members and bridge intermediates are never
-  named. ``qgen_checks.answer_leaks`` checks it per candidate.
+  named. ``qgen.checks.answer_leaks`` checks it per candidate.
 - **Neutral verbs.** Each relation has one fixed phrase, close to its PrimeKG
   ``display_relation`` ("associated with", "indicated for", "linked to"), with no
   hedging ("is it true that...") or emphasis that would hint at the answer.
 - **"Direct".** Relationship questions ask for a *direct* relation, so a path
   through a third entity is not an answer to them.
+- **Every mention is typed** (Kaitlin, 2026-11-19, revision 2). Every entity is
+  named with its type, "the disease *X*", "the phenotype *Y*" (:func:`mention`), in
+  every template and every answerability class, so typing carries no signal. Where
+  the wording already names the type ("has the phenotype {obj}", "the pathway
+  {x}"), the slot takes the bare name (:data:`TYPE_NAMED_BY_WORDING`); that depends
+  on the template's wording only, and every wording is shared by two classes. The
+  name rule that goes with it is the type-qualified one
+  (``qgen.checks.typed_name_check``).
+- **Phenotype names in lowercase** (:func:`display_name`): HPO capitalizes its
+  labels ("Seizure"), which reads oddly mid-sentence. Only a word's leading
+  capital is lowered, and only when the rest of the word has no capital or digit,
+  so acronyms ("EEG", "FDG PET") and tokens like "T2" or "IgA" keep their case.
+  Search is case-insensitive, so the lowered name finds the same node.
 
 The phrases are the only biology-facing wording in the set; Kaitlin reviews them
-for domain correctness before implementation (open questions in the design doc).
+for domain correctness (open questions in the design doc).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 
 # --------------------------------------------------------------------------------------
 # Relation phrases
@@ -244,6 +260,94 @@ def catalog() -> tuple[Template, ...]:
         t.append(Template(f"fp_contra.{r}", "false_premise", "correctable", "evid", r))
     t.append(Template("fp_reversed.disease_disease", "false_premise", "correctable", "evid", "disease_disease"))
     return tuple(t)
+
+
+# --------------------------------------------------------------------------------------
+# Typed mentions
+# --------------------------------------------------------------------------------------
+
+TYPE_WORD: dict[str, str] = {
+    # store node type -> the word a question uses for it ("the <word> <name>")
+    "disease": "disease",
+    "effect/phenotype": "phenotype",
+    "gene/protein": "gene or protein",
+    "drug": "drug",
+    "exposure": "exposure",
+    "pathway": "pathway",
+    "biological_process": "biological process",
+    "molecular_function": "molecular function",
+    "cellular_component": "cellular component",
+    "anatomy": "anatomical structure",
+}
+"""How a typed mention names each node type. Covers every type in the store."""
+
+TYPE_NAMED_BY_WORDING: dict[tuple[str, str], frozenset[str]] = {
+    # (statement relation or bridge key, slot) pairs whose surrounding words already
+    # name the entity's type, so the slot takes the bare name even when typed.
+    ("disease_phenotype_positive", "obj"): frozenset({"effect/phenotype"}),  # "has the phenotype {obj}"
+    ("disease_phenotype_negative", "obj"): frozenset({"effect/phenotype"}),  # "the phenotype {obj} is ..."
+    ("pathway_assoc", "x"): frozenset({"pathway"}),  # "in the pathway {x}"
+}
+"""Slots where the wording names the type. Keyed by the statement's relation (for
+``evid``/``evid2``) or the bridge key, and the slot (``subj``/``obj``/``x``/``y``)."""
+
+
+def wording_names_type(key: str, slot: str, etype: str) -> bool:
+    """Does the wording around ``slot`` of statement/bridge ``key`` already say ``etype``?"""
+    return etype in TYPE_NAMED_BY_WORDING.get((key, slot), frozenset())
+
+
+LOWERCASE_TYPES = frozenset({"effect/phenotype"})
+"""Node types whose names a question writes in lowercase (see :func:`display_name`)."""
+
+
+def _lower_word(w: str) -> str:
+    rest = w[1:]
+    if w[:1].isupper() and not any(ch.isupper() or ch.isdigit() for ch in rest):
+        return w[:1].lower() + rest
+    return w
+
+
+def display_name(name: str, etype: str, lowercase: bool = True) -> str:
+    """The name as a question writes it: lowercased for :data:`LOWERCASE_TYPES`.
+
+    Lowers a word's leading capital only when the rest of the word has no capital
+    and no digit ("Senile plaques" -> "senile plaques"; "FDG", "T2", "IgA" kept)."""
+    if not lowercase or etype not in LOWERCASE_TYPES:
+        return name
+    return " ".join(_lower_word(w) for w in name.split(" "))
+
+
+def mention(name: str, etype: str, typed: bool, lowercase: bool = True) -> str:
+    """How a question names an entity: the display name, prefixed by ``the <type
+    word>`` when ``typed``."""
+    shown = display_name(name, etype, lowercase)
+    return f"the {TYPE_WORD[etype]} {shown}" if typed else shown
+
+
+def catalog_sha256() -> str:
+    """SHA-256 over every wording and template definition in this file.
+
+    Recorded in the item manifest, so an item set can be tied to the exact wording it
+    was generated with. It hashes content (canonical JSON), not the file's bytes, so a
+    comment edit doesn't change it and a wording edit always does.
+    """
+    content = {
+        "list_clause": LIST_CLAUSE,
+        "evid_statement": EVID_STATEMENT,
+        "evid_text": EVID_TEXT,
+        "evid2_text": EVID2_TEXT,
+        "rel_text": REL_TEXT,
+        "admissible": ADMISSIBLE,
+        "opposite": OPPOSITE,
+        "bridges": [asdict(b) for b in BRIDGES],
+        "catalog": [asdict(t) for t in catalog()],
+        "type_word": TYPE_WORD,
+        "type_named_by_wording": {f"{k}|{s}": sorted(v) for (k, s), v in TYPE_NAMED_BY_WORDING.items()},
+        "lowercase_types": sorted(LOWERCASE_TYPES),
+    }
+    blob = json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def cap_first(s: str) -> str:

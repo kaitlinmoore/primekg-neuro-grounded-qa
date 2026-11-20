@@ -1,4 +1,4 @@
-"""Tests for the question-generation checks (``scripts/data/qgen_checks.py``), the
+"""Tests for the question-generation checks (``scripts/data/qgen/checks.py``), the
 template catalog (``qgen_templates.py``) and the feasibility pipeline
 (``qgen_feasibility.py``), on synthetic fixtures in ``tests/fixtures/data/qgen/``.
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 
 import pytest
-import qgen_checks as qc
+from qgen import checks as qc
 import qgen_templates as qt
 from neuro_grounded_qa.contracts import (
     Entity,
@@ -63,6 +63,9 @@ def full(qdir):
     con.executemany("INSERT INTO adj VALUES (?, ?, ?, ?)", rows)
     con.execute("CREATE TABLE pk_hier_first(rel VARCHAR, parent VARCHAR, child VARCHAR)")
     con.executemany("INSERT INTO pk_hier_first VALUES (?, ?, ?)", spec["hierarchy_first_rows"])
+    con.execute("CREATE TABLE nodes(id VARCHAR, type VARCHAR, name VARCHAR, source VARCHAR, source_id VARCHAR)")
+    if spec.get("nodes"):
+        con.executemany("INSERT INTO nodes VALUES (?, ?, ?, ?, ?)", spec["nodes"])
     yield qc.FullGraph(con, spec["index_of"], spec["child_end"])
     con.close()
 

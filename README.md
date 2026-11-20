@@ -2,7 +2,7 @@
 
 A [Verifiers](https://github.com/PrimeIntellect-ai/verifiers) environment for citation-grounded question answering over a neurodegeneration-focused subgraph of PrimeKG, with a reward-hacking audit of its grounding verifier.
 
-**Status: in progress.** The environment code is under construction and runs end to end on synthetic fixtures; the question set isn't built yet, and there are no results.
+**Status: in progress.** The environment runs end to end on synthetic fixtures. The evidence store and the question set build locally from the downloaded graph (see below). There are no results yet.
 
 ## Question
 
@@ -46,6 +46,21 @@ Runs use verifiers' `null` harness (set in `configs/local.toml`): the model gets
 Add `--dry-run True` to the `scripts/run.sh` command to resolve and write the config without running anything. Other `vf-run` options pass through unchanged. Run outputs go to `outputs/` (gitignored).
 
 With no data configured, the environment runs on the synthetic fixtures in `tests/fixtures/contracts/`. `configs/local.toml` sets the question items (`[env.taskset]`) and the evidence store and tool limits (`[env.taskset.tools]`).
+
+### Building the data
+
+Graph data stays out of git, in `$NGQ_DATA_DIR` (set by `.envrc`). From the repo root, after `uv sync`:
+
+```bash
+uv run python scripts/data/download.py                     # PrimeKG (and OptimusKG) raw files, checksummed
+uv run python scripts/data/measure.py primekg --domain neuro   # full-graph duckdb (derived/primekg.duckdb) that absence checks read
+uv run python -m neuro_grounded_qa.data.build --out "$NGQ_DATA_DIR/store/primekg-neuro-c95"   # evidence store
+uv run python scripts/data/question_set.py generate        # items/<build_id>/{train,heldout}.jsonl + manifest.json
+uv run python scripts/data/question_set.py check --build-id <build_id>   # re-check both splits (counts only)
+NGQ_ITEMS_DIR="$NGQ_DATA_DIR/items/<build_id>" uv run pytest -q tests/integration/test_real_train_replay.py   # opt-in: replay every train route through run.sh
+```
+
+The question-set commands print counts and hashes only; the held-out file is never displayed. To run on the real data, pass `--env.taskset.items_path "$NGQ_DATA_DIR/items/<build_id>/train.jsonl"` and `--env.taskset.tools.store_path "$NGQ_DATA_DIR/store/primekg-neuro-c95"` to `scripts/run.sh`. Details: `docs/question_set_design.md` ("Evidence store", "Item set").
 
 ## Results, methodology
 

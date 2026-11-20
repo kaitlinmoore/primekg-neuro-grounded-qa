@@ -291,3 +291,20 @@ def test_task_built_without_a_taskset_records_only_reward_params():
     [task] = list(_taskset(items_path=ITEMS_PATH).take(1))
     bare = NeuroGroundedQATask(task.data)
     assert set(bare.provenance_info()) == {"reward_params"}
+
+
+def test_invalid_item_error_carries_no_item_text(tmp_path):
+    # An invalid item's error names the file, the line, field paths and error codes,
+    # never the item's values: pydantic's own message would echo them, and with
+    # allow_heldout this file could be the held-out split.
+    record = json.loads(ITEMS_PATH.read_text().splitlines()[0])
+    record.update(prompt="Which genes are associated with Zyxsecret Canary?", qtype="no_such_type")
+    record["gold_points"][0]["evidence"] = ["E:SECRET1"]
+    bad = tmp_path / "items.jsonl"
+    bad.write_text(json.dumps(record) + "\n")
+    with pytest.raises(ValueError) as exc:
+        load_items(bad, "train")
+    msg = str(exc.value)
+    assert f"{bad}:1" in msg and "qtype:literal_error" in msg
+    assert "Zyxsecret" not in msg and "SECRET1" not in msg and "no_such_type" not in msg
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__

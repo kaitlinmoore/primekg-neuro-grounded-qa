@@ -26,5 +26,5 @@
     ["disease_disease", "n_D_A", "n_D_A1"],
     ["anatomy_anatomy", "n_AN_C", "n_AN_P"]
   ],
-  "child_end": {"disease_disease": "y", "anatomy_anatomy": "x"}
+  "child_end": {"disease_disease": "y", "phenotype_phenotype": "y", "anatomy_anatomy": "x"}
 }

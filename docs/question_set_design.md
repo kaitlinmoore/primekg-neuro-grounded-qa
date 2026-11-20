@@ -2556,8 +2556,8 @@ scripts/run.sh -m <model> --client.base-url <url> --client.api-key-var <VAR> \
   --env.taskset.tools.store_path "$NGQ_DATA_DIR/store/primekg-neuro-c95"
 ```
 
-Real question items are needed too (`--env.taskset.items_path`); they don't exist
-yet.
+Real question items are needed too (`--env.taskset.items_path`); see "Item set"
+below.
 
 ### Checks
 
@@ -2738,17 +2738,24 @@ call from a seed returns the alphabetically first relations
 
 ## Question generation design
 
-**Status: proposed, pending Kaitlin's approval. No item has been generated.** This
-section fixes how the question set will be built from the evidence store
-(`primekg-2.1-6d869fa6bb10`) before any item exists. The templates and the
-generation rules are instruments, so they are settled first; and once real items
+**Status: approved by Kaitlin on 2026-11-19 with the decisions in "Settled
+decisions", and implemented; the generated set is described in "Item set" below.**
+This section fixed how the question set would be built from the evidence store
+(`primekg-2.1-6d869fa6bb10`) before any item existed. The templates and the
+generation rules are instruments, so they were settled first; and once real items
 exist the held-out split must stay unexamined, so the design rests only on synthetic
-examples and aggregate counts. A separate step implements it after approval.
+examples and aggregate counts.
 
-Code written with this design: `scripts/data/qgen_templates.py` (the template
-catalog, as data), `scripts/data/qgen_checks.py` (the reusable checks) and
+Code: `scripts/data/qgen_templates.py` (the template catalog, as data: the single
+place any wording lives), the shared module `scripts/data/qgen/` (`checks.py` the
+reusable checks, `candidates.py` the shape generators, filters and check pipeline,
+`selection.py` the targets and seeded selection, `files.py` the item files and
+manifest, `verify.py` the re-check of written files, `view.py` the train-only viewer,
+`safety.py` the no-text-out guard, `cli.py` the commands),
+`scripts/data/question_set.py` (the commands' entry point) and
 `scripts/data/qgen_feasibility.py` (counts per template after every check, on the
-real store). Tests: `tests/data/test_qgen_checks.py`, on the synthetic fixtures in
+real store). Tests: `tests/data/test_qgen_checks.py` and
+`tests/data/test_question_set.py`, on the synthetic fixtures in
 `tests/fixtures/data/qgen/`.
 
 ### Principles
@@ -2771,7 +2778,8 @@ real store). Tests: `tests/data/test_qgen_checks.py`, on the synthetic fixtures 
   classes (tested: `test_every_text_pattern_is_shared_by_two_answerability_classes`),
   so the wording never tells a model whether the graph supports an answer.
 - **One build.** Items cite `E:` IDs that exist only in one store build. Item files
-  live under that `build_id` and record it.
+  live under that `build_id`, every item carries it in its `build_id` field, and the
+  taskset refuses items whose `build_id` differs from the store's.
 - **Held-out text is never seen.** The split is made by code before anyone reads
   item text, and held-out items are never displayed, logged or shown to an AI (see
   "Split plan and held-out protection").
@@ -2930,21 +2938,41 @@ false one a false premise, and the text can't tell them apart.
 ### Validity checks
 
 The generator runs every check on every candidate, in this order, and drops a
-candidate at the first failure. `qgen_feasibility.py` runs the same checks now.
+candidate at the first failure (`qgen.candidates.build_pool`). The feasibility script
+runs the same pipeline; `question_set.py check` re-runs the per-item checks on the
+written files.
 
+0. **Domain filters** (added 2026-11-19, Kaitlin's decisions): no entity in the
+   item (named, answer, gold, premise or gap) is a phenotype in HPO's
+   mode-of-inheritance (`HP:0000005`) or clinical-modifier (`HP:0012823`, which
+   holds clinical course, onset, severity) subtree, walked in the **full** graph's
+   `phenotype_phenotype` hierarchy (`FullGraph.subtree_entities`; 32 and 156 terms in
+   PrimeKG, 25 of them in the store); and a reversed-subtype premise
+   (`fp_reversed`) is used only on an edge with no grouped (`group:`) node at either
+   end (`qgen.candidates.domain_problem`).
 1. **No fallback entities.** No entity in the question, gold, premise or gaps has a
-   `primekg:` ID (`qgen_checks.has_fallback`).
+   `primekg:` ID (`qgen.checks.has_fallback`).
 2. **Unambiguous names.** Every named entity passes the name rule
-   (`qgen_checks.name_check`): search its exact name with the real
-   `search_entities` tool body (default config, 20 results); the intended entity
-   must be the **first** result, and no other result may have the same name,
-   ignoring case. The store ranks exact matches first and breaks ties by name, then
-   ID, so a second node with the same name can be second only because of its ID; the
-   model can't tell them apart from the name.
+   (`qgen.checks.resolve_mention`). Strict form (`name_check`): search its exact
+   name with the real `search_entities` tool body (default config, 20 results); the
+   intended entity must be the **first** result, and no other result may have the
+   same name, ignoring case. The store ranks exact matches first and breaks ties by
+   name, then ID, so a second node with the same name can be second only because of
+   its ID; the model can't tell them apart from the name. **Type-qualified form**
+   (`typed_name_check`), the rule in force since revision 2 (2026-11-19): every
+   question names every entity with its type ("the disease *X*", "the phenotype
+   *Y*", `qgen_templates.mention`), and among the same search's results *of that
+   type*, the intended entity is first and no other has the same name. The tool has
+   no type filter, so this is the search a model would read with the type in hand.
+   Where the template's wording already names the type ("has the phenotype {obj}",
+   "in the pathway {x}"), the slot keeps the bare name. Phenotype names are written
+   in lowercase, except acronyms and mixed-case tokens (`display_name`); search is
+   case-insensitive. (The first generated set typed a mention only when the strict
+   form failed; that made typed mentions more common on answerable items.)
 3. **No answer in the question.** No gold entity the question doesn't name (list
    members, bridge intermediates) appears in its text, case-insensitively on word
-   boundaries (`qgen_checks.answer_leaks`).
-4. **Full-graph absence** (`qgen_checks.FullGraph`, batched over all candidates):
+   boundaries (`qgen.checks.answer_leaks`).
+4. **Full-graph absence** (`qgen.checks.FullGraph`, batched over all candidates):
    - pair absence: no edge of any relation between the two nodes, either order
      (unanswerable pairs, `no` premises, gap triples);
    - triple absence: no edge of that relation between them, either order for
@@ -2960,7 +2988,7 @@ candidate at the first failure. `qgen_feasibility.py` runs the same checks now.
    the store (`gold_point_problems`, `triple_flag_problems`).
 6. **Reachability and observability.** A **route** is a set of tool calls within
    the default budget that meets every requirement of the item
-   (`qgen_checks.plan_route`):
+   (`qgen.checks.plan_route`):
    - each named entity costs one `search_entities` call;
    - **Show**: each gold edge is on the first page of some `get_neighbors` call
      (filtered or not) from one of its ends;
@@ -3016,7 +3044,7 @@ candidate at the first failure. `qgen_feasibility.py` runs the same checks now.
 - **Split by code, before anyone reads item text.** The generator assigns each
   candidate's split as a pure function of its item ID, the split seed and the
   held-out share: `split_of(id, seed, 1/3)` is held-out when
-  `sha256(seed, id) < 1/3` (`qgen_checks.split_of`). Stratification by type and
+  `sha256(seed, id) < 1/3` (`qgen.checks.split_of`). Stratification by type and
   group comes from selecting each split's targets from its own pool. Because the
   split depends on nothing else, no change to templates, filters or the pool can move
   a candidate from held-out to train. This is what lets train review change the
@@ -3057,13 +3085,19 @@ candidate at the first failure. `qgen_feasibility.py` runs the same checks now.
   Not committed (data stays out of git). Whether the question set ships in the Hub
   package is still Kaitlin's open decision.
 - **Item ID:** `q-` plus 12 hex digits of SHA-256 over (`build_id`, template ID,
-  template parameters) (`qgen_checks.item_id`). It is stable across regenerations
+  template parameters) (`qgen.checks.item_id`). It is stable across regenerations
   and says nothing about type or split, which keeps blind grading blind.
+- `build_id` is the item's own field (`QuestionItem.build_id`), written from the
+  store's `build.json`, never typed by hand. The generator refuses to write unless
+  the directory name, the manifest's `build_id` and every item's agree.
 - `source="template"`, `template_id` the template's ID, `evidence_scope="graph"`,
   `split` from the hash.
-- `notes` is a JSON string: `build_id`, generator version, template parameters
-  (entity IDs and relation keys) and the route (`Route.as_notes()`: the searches and
-  the `get_neighbors` calls, by ID).
+- `notes` is a JSON string (`qgen.candidates.item_notes`), IDs and relation labels
+  only: generator version, template parameters (entity IDs and relation keys), the
+  disease group, the relation key, the named entities and which of them are typed
+  mentions, the route (`Route.as_notes()`: the searches and the `get_neighbors`
+  calls, by ID), the probes' allowed start entities, the requirements the route
+  meets, and the full-graph conditions checked. It no longer carries `build_id`.
 - Every item file is valid only for its `build_id`.
 
 ### AI paraphrase (later, optional, train only)
@@ -3090,10 +3124,15 @@ Not implemented. If it is wanted later:
 
 ### Feasibility on the built store
 
+**Design stage, before the domain filters and the type-qualified name rule.** The
+counts after them are in "Feasibility after the filters" below.
+
 `qgen_feasibility.py` on `primekg-2.1-6d869fa6bb10`, default tool config (8 calls,
 20 results, no pagination), split seed `ngq-split-v1`, held-out share 1/3. Run on
 2026-11-19 in about 3 minutes. Two runs give identical aggregates. Counts only; the
-JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
+JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility_design.json` (it was
+`qgen_feasibility.json` until the filtered run replaced that file). The shared
+module reproduces these numbers exactly with `--no-filters`.
 
 - 81,844 candidates generated, 45,868 pass every check.
 - Absence templates (`un_*`, `fp_evid`, `pa_evid2`) consider at most 300 near-miss
@@ -3345,7 +3384,40 @@ after pass 1. The thin spots:
   keeps them to 40% of false premises; indication/contraindication (254) and
   reversed subtypes (69) supply the rest.
 
-### Decisions for Kaitlin
+### Settled decisions
+
+Kaitlin, 2026-11-19, on the list below:
+
+- **Size:** 200 train + 100 held-out, at 30/25/15/20/10% by type.
+- **False premises:** 50/50 `no`/`correctable`. "Phenotype recorded as absent"
+  premises stay under the 40% relation cap, as designed.
+- **Gaps:** one per partial item.
+- **Disease-group quotas:** AD 30, PD 20, ALS 15, FTD (with the FTD/ALS nodes) 15,
+  HD 12, DLB 8 percent.
+- **Bounds:** at most 5 answers per list and 3 intermediates per bridge.
+- **Absence items:** near-miss partners.
+- **Split:** seed `ngq-split-v1`, held-out share 1/3, held-out selected first.
+- **Domain filters:** exclude HPO's mode-of-inheritance and clinical-modifier
+  subtrees from phenotype templates; use reversed-subtype false premises only for
+  edges that don't touch a grouped (`group:`) node.
+- **Names:** a name shared by two nodes is allowed if the question names the entity
+  type and a search read that way resolves to the intended node; otherwise the
+  strict rule applies.
+- **Prompt hint and held-out guards:** added to the taskset prompt and the project
+  settings (see `docs/changelog.md`).
+
+Revision 2 (Kaitlin, 2026-11-19, after reviewing the first generated set):
+
+- **Wording:** every entity mention is typed, in every template and class (the
+  name rule is the type-qualified one alone); phenotype names in lowercase.
+- **False premises:** the 40% relation cap applies within each kind (`no`,
+  `correctable`) separately.
+- **Shared-neighbor bridges** (`shared_phenotype`, `shared_protein`) stay as they
+  are; the smoke run reports by template family to check them.
+- **Left as is:** the relation cap's rounding, and the thin partial AD and HD
+  cells.
+
+### Decisions for Kaitlin (as raised at design time; settled above)
 
 1. **Size.** 200 + 100 is feasible with headroom everywhere but train partial HD.
    The pool would support more (partial is the limit, at roughly 16× now).
@@ -3391,20 +3463,242 @@ after pass 1. The thin spots:
 12. **Split seed** (`ngq-split-v1`) and held-out share (1/3). Set once; changing the
     seed reassigns every candidate.
 
-### What the implementation needs
+### What the implementation needed (done)
 
-- A generator script in `scripts/data/` that reuses `qgen_templates`,
-  `qgen_checks` and the shape generators and `select` in `qgen_feasibility.py`
-  (move them into a shared module first). It writes the two files and the manifest,
-  and prints only counts.
-- A train-only viewer, and a held-out integrity check that prints hashes, counts
-  and pass/fail only.
-- Tests on synthetic fixtures for writing, the manifest, split stability under pool
-  changes, and the no-text-output property of every script that touches items.
-- No contract change is needed. Two are worth considering: a `build_id` field on
-  `QuestionItem` (it lives in `notes` and the manifest for now), and a structured
-  `notes` (now a JSON string).
+- A generator that reuses the template catalog, the checks, the shape generators and
+  the selection from one shared module: `scripts/data/qgen/`, used by
+  `question_set.py generate` and the feasibility script. It writes the two files and
+  the manifest, and prints only counts.
+- A train-only viewer (`view`, `spot-check`), and a held-out integrity check
+  (`check-heldout`) that prints hashes, counts and pass/fail only.
+- Tests on synthetic fixtures for writing, the manifest, determinism, split
+  stability under pool changes, and the no-text-output property of every command
+  that touches items (`tests/data/test_question_set.py`).
+- `QuestionItem` now has a `build_id` field, which items carry; `notes` is still a
+  JSON string (a structured `notes` remains a possible contract change).
 - Context mode (the brief's tool-free mode) needs each item's candidate evidence;
   this design doesn't define it. The route's pages are a natural source.
 - `configs/local.toml` must point `items_path` at `train.jsonl` and `store_path` at
   the store for real runs. The committed config stays on fixtures.
+
+### Feasibility after the filters
+
+(Revision 1 rules: names typed only when shared, as stored; one cap over all false
+premises.)
+
+`qgen_feasibility.py` on the same store and tool config, 2026-11-19, with the domain
+filters and the type-qualified name rule on (`Filters()`, the generator's default).
+Counts only; the JSON is `$NGQ_DATA_DIR/derived/qgen_feasibility.json`.
+
+| | Before (design stage) | After |
+|---|---|---|
+| Candidates generated | 81,844 | 81,844 |
+| Dropped by the domain filters | n/a | 3,097 (3,022 HPO subtree, 75 reversed premise on a grouped node) |
+| Dropped by the name rule | 6,920 (6,401 `not_first`, 519 `shared_name`) | 18 (9 `not_first_of_type`, 9 `shared_name_in_type`) |
+| Valid | 45,868 | 49,003 |
+| Targets met in pass 1 (both splits) | yes | yes |
+
+- **HPO filter.** 188 PrimeKG terms are in the two subtrees (32 under "Mode of
+  inheritance", 156 under "Clinical modifier", which holds "Clinical course",
+  onset, pace of progression and severity); 25 of them are in the store. Every
+  candidate that touches one is dropped, whole: a list or bridge whose answers
+  include one is not trimmed, since its gold would then be incomplete.
+  `sh_list.disease_phenotype_positive` goes from 2 valid to 0.
+- **Grouped nodes.** `fp_reversed.disease_disease` goes from 69 valid to 32.
+- **Type-qualified names** recover most of the 6,920 name drops. ALS single-hop
+  candidates go from 119 to 735: the grouped ALS seed shares its name with an HPO
+  phenotype, so under the strict rule it could never be named.
+- **Typed mentions by answerability** (valid candidates naming at least one entity
+  with its type): `yes` 2,022 of 15,579 (13%), `partial` 59 of 741 (8%),
+  `correctable` 104 of 953 (11%), `no` 1,987 of 31,730 (6%). The rule depends on the
+  entity alone, but entities aren't spread evenly over the classes (answerable items
+  name seeds more often, and some seeds share a phenotype's name), so a typed
+  mention is mildly more common on answerable candidates. Settled in revision 2 by
+  typing every mention (next section).
+
+**Valid candidates per split and type, against targets**
+
+| Type | train valid | train target | multiple | held-out valid | held-out target | multiple |
+|---|---|---|---|---|---|---|
+| single_hop | 3147 | 60 | 52x | 1626 | 30 | 54x |
+| multi_hop | 7251 | 50 | 145x | 3555 | 25 | 142x |
+| partial | 494 | 30 | 16x | 247 | 15 | 16x |
+| unanswerable | 16790 | 40 | 420x | 8446 | 20 | 422x |
+| false_premise:no | 4349 | 10 | 435x | 2145 | 5 | 429x |
+| false_premise:correctable | 644 | 10 | 64x | 309 | 5 | 62x |
+
+**Valid candidates per type and disease group, both splits**
+
+| Type | AD | PD | ALS | FTD | HD | DLB |
+|---|---|---|---|---|---|---|
+| single_hop | 799 | 1963 | 735 | 889 | 295 | 92 |
+| multi_hop | 1985 | 4117 | 1353 | 2004 | 1069 | 278 |
+| partial | 36 | 389 | 52 | 202 | 17 | 45 |
+| unanswerable | 3053 | 9431 | 2247 | 8240 | 144 | 2121 |
+| false_premise:no | 822 | 2507 | 852 | 1472 | 34 | 807 |
+| false_premise:correctable | 124 | 402 | 110 | 224 | 83 | 10 |
+
+**Cells under 3x headroom**
+
+| Split | Type | Group | Target | Valid | Multiple |
+|---|---|---|---|---|---|
+| train | partial | AD | 9 | 24 | 2.7x |
+| train | partial | HD | 4 | 11 | 2.8x |
+| heldout | partial | AD | 5 | 12 | 2.4x |
+
+Partial AD lost candidates to the HPO filter (AD's phenotype lists include
+inheritance and onset terms). Every cell still fills in pass 1.
+
+### Feasibility under the revision 2 rules
+
+Same store and tool config, 2026-11-19, with every mention typed, phenotype names
+in lowercase and the per-kind false-premise cap (`--rules current`, the default).
+The previous filtered result is kept as
+`$NGQ_DATA_DIR/derived/qgen_feasibility_rev1.json`; `--rules revision1` reproduces
+it exactly.
+
+| | Revision 1 | Revision 2 |
+|---|---|---|
+| Valid candidates | 49,003 | 49,003 |
+| Name-rule drops | 18 (9 `not_first_of_type`, 9 `shared_name_in_type`) | 18 (same) |
+| Valid candidates with every named entity typed, per class | 13% `yes`, 8% `partial`, 11% `correctable`, 6% `no` | 100% in every class |
+| Targets met in pass 1 (both splits) | yes | yes |
+
+- The pool is the same: an entity passes the type-qualified rule exactly when it
+  passed one of the earlier two forms, and item IDs don't depend on wording. Only
+  the question text changes.
+- **False-premise relation mix** (selected; cap per kind 4 in train, 2 in
+  held-out):
+
+  | Kind | Relation | Train, rev. 1 | Train, rev. 2 | Held-out, rev. 1 | Held-out, rev. 2 |
+  |---|---|---|---|---|---|
+  | correctable | `disease_phenotype_negative` | 7 | 4 | 3 | 2 |
+  | correctable | `indication` | 2 | 3 | 0 | 0 |
+  | correctable | `contraindication` | 1 | 2 | 2 | 2 |
+  | correctable | `disease_disease` (reversed subtype) | 0 | 1 | 0 | 1 |
+  | no | `disease_phenotype_positive` | 4 | 4 | 1 | 1 |
+  | no | `disease_protein` | 5 | 4 | 2 | 2 |
+  | no | `exposure_disease` | 1 | 2 | 1 | 1 |
+  | no | `disease_disease` | 0 | 0 | 1 | 1 |
+
+- Cells under 3x headroom are unchanged (partial AD in both splits, partial HD in
+  train).
+
+## Item set
+
+Generated on 2026-11-19 by `scripts/data/question_set.py generate` (generator
+1.1.0, commit `e6560ee`, clean tree) on store `primekg-2.1-6d869fa6bb10`, with the
+settled decisions above, revision 2 included. It replaces the first set (generator
+1.0.0, commit `48082fb`; train `13c94dd5…`, held-out `7357994b…`) in the same
+directory. Not committed: the files live in
+`$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10/`.
+
+| File | Items | SHA-256 |
+|---|---|---|
+| `train.jsonl` | 200 | `caf0480d7ce00741b0bf851a844c1e7920e3979f81144c784d3b7de936831d1c` |
+| `heldout.jsonl` | 100 | `af7cac000eb7cc879b354a52aa63ce6f42b83bb101a84da86201f7eab6ee0fe7` |
+| `manifest.json` | | `bb57005e0444772e2c2c43cb50bccdf4e34e6b6516d74416c359ea3b38af291a` |
+| `train_spot_check.md` | 20 (train) | seeded sample for domain review (`spot-check`), refreshed |
+
+**Counts** (from the manifest; held-out by aggregate only)
+
+| Type | train | held-out |
+|---|---|---|
+| single_hop | 60 | 30 |
+| multi_hop | 50 | 25 |
+| partial | 30 | 15 |
+| unanswerable | 40 | 20 |
+| false_premise:no | 10 | 5 |
+| false_premise:correctable | 10 | 5 |
+
+| Group | train | held-out |
+|---|---|---|
+| AD | 60 | 29 |
+| PD | 40 | 20 |
+| ALS | 32 | 16 |
+| FTD (with FTD/ALS) | 28 | 15 |
+| HD | 24 | 13 |
+| DLB | 16 | 7 |
+
+- Every (type, group) cell is at its quota in both splits, filled in pass 1: no cell
+  spilled. Group totals differ from the plain percentages because quotas are
+  apportioned per type (largest remainder), and a split's type targets are small.
+- No relation key is over 40% of its type, or of its kind for false premises. The
+  largest shares: train `multi_hop|ppi_assoc` 20 of 50; held-out
+  `multi_hop|ppi_assoc` 10 of 25. False-premise mix: see "Feasibility under the
+  revision 2 rules".
+- Every item names every entity with its type (300 of 300; the manifest's
+  `typed_mentions|answerable` equals `answerable` in both splits).
+- The manifest also records each file's SHA-256 and count, counts per split × type ×
+  group × relation key, the generator version and commit, the split seed and share,
+  the `build_id`, the store's `build.json` SHA-256
+  (`ff0fc5d4de74f378f83eaf13312e485e4578e685e29d9ffbdef2b5462cbf1c0c`), the template
+  catalog's SHA-256, the filters, plan and tool config, the selection counts
+  (including the relation mix and caps per type) and the pool's funnel.
+
+**Checks on the written set**
+
+- `check` (both splits) and `check-heldout`: every item check passes (schema, split
+  and `build_id`, template, ID and split hash, gold points stated by store edges,
+  flags, route within budget and meeting its requirements when re-run against the
+  real tool bodies, full-graph conditions, premise and gap absence, names in the
+  set's naming mode, leaks, domain filters); file hashes and counts match the
+  manifest; no item ID, fact or named-entity set is shared across the splits.
+- Determinism: a second run gives a byte-identical manifest (so identical item-file
+  hashes).
+- The taskset loads all 200 train items against the real store, with the
+  `build_id` check passing; the fixture store is refused. A `scripts/run.sh
+  --dry-run True` resolves the real paths (a dry run doesn't load items).
+- Route replay (train only), `tests/integration/test_real_train_replay.py`: an
+  honest scripted policy per train item (search each named entity, make each
+  recorded `get_neighbors` call, then claim every gold point citing its edge, flag
+  the gaps on partial items, abstain on `no` items), run through `scripts/run.sh`
+  against the stub endpoint on the real store. It passes: all 200 train items reach
+  reward 1, and on each of the 150 items with gold the route's own calls retrieve
+  every gold edge within the 8-call budget (the 50 `no` items show only that
+  abstaining scores 1). Held-out items are not replayed.
+
+**Regenerate** (deterministic; refuses to overwrite without `--force`):
+
+```bash
+uv run python scripts/data/question_set.py generate --force
+uv run python scripts/data/question_set.py check --build-id primekg-2.1-6d869fa6bb10
+uv run python scripts/data/question_set.py spot-check --build-id primekg-2.1-6d869fa6bb10
+NGQ_ITEMS_DIR="$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10" \
+  uv run pytest -q tests/integration/test_real_train_replay.py
+```
+
+The replay test is opt-in: it is skipped unless `NGQ_ITEMS_DIR` names an item-set
+directory (store: `NGQ_STORE_DIR`, default `$NGQ_DATA_DIR/store/primekg-neuro-c95`).
+It reads `train.jsonl` only, through the viewer's train-only loader, and refuses a
+file path or a train file holding a held-out record.
+
+Commands take an items directory or a build ID, never a held-out file path, so the
+project's deny rules don't block them. `view --build-id <id> [--qtype ...]
+[--template ...] [--group ...] [--contains ...]` renders train items; it refuses
+the held-out file and any file holding a held-out record.
+
+**Point a run at the items** (the committed `configs/local.toml` stays on the
+fixtures):
+
+```bash
+scripts/run.sh -m <model> --client.base-url <url> --client.api-key-var <VAR> \
+  --env.taskset.items_path "$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10/train.jsonl" \
+  --env.taskset.tools.store_path "$NGQ_DATA_DIR/store/primekg-neuro-c95"
+```
+
+The taskset refuses the held-out split unless `--env.taskset.split heldout` comes
+with `--env.taskset.allow_heldout true`, and refuses items from another store build.
+
+**Open questions after the first set, and how they were settled** (Kaitlin,
+2026-11-19):
+
+- Typed mentions were more common on answerable items: settled by typing every
+  mention (revision 2).
+- Correctable premises leaned on "phenotype recorded as absent" (7 of 10 in train):
+  settled by the per-kind cap (now 4 of 10).
+- Capitalized HPO names mid-sentence: settled by lowercase phenotype names.
+- Shared-neighbor bridges can pair unrelated diseases: kept; the smoke run reports
+  by template family.
+- The relation cap rounds down (`int(0.4 × target)`, 0 for targets under 3; the
+  smallest cap at 200 + 100 is 2, held-out per false-premise kind): left as is.
