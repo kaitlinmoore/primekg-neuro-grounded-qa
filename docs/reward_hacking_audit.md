@@ -28,6 +28,10 @@ facts). No held-out item was read. No model was called: every policy is a script
 served by the stub endpoint, and the real-model traces in parts 2 and 3 are only
 rescored.
 
+**Status, 2026-11-21:** part 5 reran the audit on the generator 1.2.0 train items
+(`train.jsonl` `a39776ad…`) with no verdict change. How often real models pay the
+precision penalty on honest answers is reported in `docs/methodology.md` (train runs).
+
 - Code: `exploits/` (policies, runner, measurement, in-process simulator).
 - Regression tests: `tests/exploits/` (candidates 1–12 on the synthetic fixtures).
 - Sandbox: `practice/exploits.ipynb`.
