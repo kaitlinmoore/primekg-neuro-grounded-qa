@@ -84,3 +84,37 @@ def test_default_mode_is_unchanged_by_the_template_option(tmp_path):
     a = si.select(d, 1, "s1", tmp_path / "a")
     b = si.select(d, 1, "s1", tmp_path / "b", None)
     assert a["chosen"] == b["chosen"] and a["stratify_by"] == "qtype"
+
+
+def test_answerable_filter_with_all_takes_every_matching_item(tmp_path):
+    lines = fixture_lines()
+    recs = [json.loads(line) for line in lines]
+    sel = si.select(items_dir(tmp_path, lines), 1, "s1", tmp_path / "out", answerable=["no"], take_all=True)
+    chosen = [json.loads(line) for line in (tmp_path / "out" / "items.jsonl").read_text().splitlines()]
+    # Every `no` item and nothing else: false_premise's `correctable` items stay out.
+    assert sorted(c["id"] for c in chosen) == sorted(r["id"] for r in recs if r["answerable"] == "no")
+    assert {c["qtype"] for c in chosen} == {"false_premise", "unanswerable"}
+    assert all(line in lines for line in (tmp_path / "out" / "items.jsonl").read_text().splitlines())
+    meta = json.loads((tmp_path / "out" / "selection.json").read_text())
+    assert meta["take_all"] is True and meta["per_type"] is None and meta["answerable"] == ["no"]
+    assert meta["available"] == {q: len(ids) for q, ids in sel["chosen"].items()}
+
+
+def test_answerable_filter_without_all_still_samples_per_type(tmp_path):
+    lines = fixture_lines()
+    sel = si.select(items_dir(tmp_path, lines), 1, "s1", tmp_path / "out", answerable=["no", "yes"])
+    assert all(len(rows) == 1 for rows in sel["chosen"].values())
+    labels = {json.loads(line)["id"]: json.loads(line)["answerable"] for line in lines}
+    assert {labels[r["id"]] for rows in sel["chosen"].values() for r in rows} <= {"no", "yes"}
+
+
+def test_answerable_filter_refuses_an_unknown_label(tmp_path):
+    with pytest.raises(ValueError, match="maybe"):
+        si.select(items_dir(tmp_path, fixture_lines()), 1, "s1", tmp_path / "out", answerable=["maybe"])
+    assert not (tmp_path / "out").exists()
+
+
+def test_all_without_filters_takes_the_whole_file(tmp_path):
+    lines = fixture_lines()
+    sel = si.select(items_dir(tmp_path, lines), 1, "s1", tmp_path / "out", take_all=True)
+    assert sel["n_items"] == len(lines)

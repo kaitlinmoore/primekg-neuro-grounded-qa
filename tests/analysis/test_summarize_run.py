@@ -155,3 +155,56 @@ def test_cli_writes_summaries_and_compares(tmp_path, capsys):
         prompt = t["task"]["data"]["prompt"]
         text = prompt if isinstance(prompt, str) else json.dumps(prompt)
         assert text[:40] not in md
+
+
+def _record_v11(t, n, over, penalty):
+    """A copy of a fixture trace as if reward v1.1 had scored it, with the given
+    precision metrics recorded. (The rescore check isn't the point here.)"""
+    t = copy.deepcopy(t)
+    t["info"]["reward_params"] = {**t["info"]["reward_params"], "mu": 1.0, "nongold_allowance": 3,
+                                  "version": "v1.1"}
+    t["metrics"].update({"nongold_supported_facts": float(n), "nongold_over_allowance": float(over),
+                         "precision_penalty": penalty})
+    return t
+
+
+def test_traces_before_v1_record_no_precision_metrics(rows):
+    for row in rows.values():
+        assert row.reward_version == "v0"
+        assert (row.nongold_supported_facts, row.nongold_over_allowance, row.precision_penalty) == (None,) * 3
+    agg = sr.precision_aggregate(list(rows.values()))
+    assert agg["reward_versions"] == {"v0": 6} and agg["precision_recorded"] == 0
+    assert agg["precision_penalty_charged"] == 0
+
+
+def test_precision_metrics_are_read_and_counted(saved):
+    traces = {k: copy.deepcopy(t) for k, t in saved.items()}
+    traces["fx-single-001"] = _record_v11(saved["fx-single-001"], 5, 2, 0.25)  # yes: charged
+    traces["fx-multi-001"] = _record_v11(saved["fx-multi-001"], 2, 0, 0.0)     # within the allowance
+    traces["fx-falsep-001"] = _record_v11(saved["fx-falsep-001"], 4, 1, 0.5)   # `no`: recorded, not charged
+    traces["fx-unans-001"] = _record_v11(saved["fx-unans-001"], 0, 0, 0.0)     # abstention: not an answer
+    row = sr.trace_row(traces["fx-single-001"], {}, 8)
+    assert row.reward_version == "v1.1"
+    assert (row.nongold_supported_facts, row.nongold_over_allowance, row.precision_penalty) == (5, 2, 0.25)
+
+    s = sr.summarize(list(traces.values()), sr.load_config(STUB_RUN), MEMBERS)
+    o = s["overall"]
+    assert o["reward_versions"] == {"v0": 2, "v1.1": 4}
+    assert o["precision_recorded"] == 3  # answers only
+    assert (o["nongold_any"], o["nongold_over_allowance_answers"]) == (3, 2)
+    assert (o["nongold_supported_facts_sum"], o["nongold_supported_facts_max"]) == (11, 5)
+    assert o["precision_penalty_charged"] == 1
+    assert o["precision_penalty_charged_sum"] == pytest.approx(0.25)
+    assert s["by_qtype"]["single_hop"]["precision_penalty_charged"] == 1
+    assert s["by_qtype"]["false_premise"]["precision_penalty_charged"] == 0
+    # The other aggregates don't move.
+    base = sr.summarize(list(saved.values()), sr.load_config(STUB_RUN), MEMBERS)["overall"]
+    for key in ("n", "parse_failure_rate", "abstention_by_answerable", "over_budget", "claims"):
+        assert o[key] == base[key]
+
+    md = sr.to_markdown(s, "v11")
+    assert "## Precision term (reward v1 and later)" in md
+    assert "Reward versions recorded: `v0` 2, `v1.1` 4." in md
+    assert "N > 0 in 3, N past the allowance in 2" in md
+    assert "items other than `no`): 1 answers, summed penalty 0.250" in md
+    assert "| type | answers | N > 0 | N > a | penalty > 0 | penalty sum |" in md
