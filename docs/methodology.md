@@ -294,3 +294,101 @@ observations, not effects.
 Run outputs, the comparison and the trace reading stay in `outputs/` (gitignored).
 
 Train runs 1 and 2 used the generator 1.1.0 item set (`train.jsonl` `caf0480d…`), which is now archived under `$NGQ_DATA_DIR/items-archive/generator-1.1.0/` after the regeneration with generator 1.2.0 (docs/question_set_design.md, "Adopted: option G").
+
+## Train run 3 (Sonnet, generator 1.2.0) (2026-11-21)
+
+Exploratory, on **train** items only; not results. No instrument changed: reward v1.1,
+train run 2's prompt (with the remarks sentence), tools, parser and store, on the
+generator 1.2.0 item set. It is the second model on the whole train split.
+
+**What ran.** `claude-sonnet-5-5` through `scripts/run.sh`, with run 2's command and
+settings apart from the model. One rollout on each of the 200 train items
+(`train.jsonl`, sha256 `a39776ad…`), in four chunks of 50 in file order, each chunk
+selected with `select_items.py --ids … --all`. The four chunk files concatenate to
+`train.jsonl` byte for byte, and each chunk's `selection.json` records the train hash.
+The resolved config differs from run 2's only in the model, the items path, the limit
+and the output directory. Cost $7.74 (3.14M input and 0.15M output tokens, 767 model
+calls, at $2 / $10 per MTok), against an estimate of $7.8–8.8 from verification run 3's
+Sonnet cost per rollout and the Haiku baseline's call mix. A $12 stop was checked before
+the run and after each chunk. No held-out item was loaded.
+
+**What was measured.** Everything train run 2 measured, paired by item with the Haiku
+baseline on the same items: run 2's traces for the 189 items the regeneration kept, plus
+the 11-item top-up (mean 0.866). Seeded paired bootstrap intervals on the per-item
+difference, for orientation. The traces read were every Sonnet parse failure, merged
+claim and edge-ID probe, plus 30 of the 37 items where the two models differ by 0.5 or
+more (drawn with a fixed seed). Sonnet had no penalty charge and no wrong abstention to
+read.
+
+**What it showed.** One rollout per model per item, so item-level differences are
+observations, not effects.
+
+- The plumbing held on all 200 traces. Each records v1.1, the store `build_id` and its
+  chunk's items hash. Each rescores offline to its recorded reward, also against the
+  `train.jsonl` item, and v0, v1 and v1.1 reproduce the reward's own. No claim named a
+  member ID of a grouped node.
+- **Reward.** Sonnet 0.917 (95% interval 0.879–0.952) against Haiku 0.866. The paired
+  difference is +0.052 (0.002 to 0.103). By type:
+
+  | type | items | Haiku | Sonnet | difference (95% interval) |
+  |---|---|---|---|---|
+  | `single_hop` | 60 | 0.950 | 0.992 | +0.042 (−0.008 to 0.100) |
+  | `multi_hop` | 50 | 0.810 | 0.910 | +0.100 (−0.020 to 0.220) |
+  | `partial` | 30 | 0.948 | 0.967 | +0.019 (−0.081 to 0.119) |
+  | `false_premise` | 20 | 0.710 | 0.625 | −0.085 (−0.305 to 0.130) |
+  | `unanswerable` | 40 | 0.825 | 0.925 | +0.100 (0.000 to 0.225) |
+
+  162 items score the same; 37 differ by 0.5 or more (Sonnet higher on 26). The reward
+  separates the two models overall, but only just at this size. The gap comes mostly
+  from merged claims, Haiku's flagged answers on `no` items, and parse failures landing
+  on different items. It doesn't come from grounding: neither model stated an
+  unsupported fact.
+- **Parse failures: 8, against Haiku's 10, on different items** (none in both). All 8
+  are a short lead before correct JSON. On bridge items the lead says the bridge entity
+  appears in both lists. On false-premise items it is a one-line verdict on the premise.
+  None is about edge direction. With the JSON alone, 7 would score 1.0 and one 0.7.
+  Three of the 8 are on the 10 `correctable` items, and they cost more than Sonnet's
+  whole `false_premise` deficit. Prose before the JSON is a habit of both models, not
+  of Haiku alone.
+- **Strict-retrieval rejections: 2, Sonnet's first.** On two `no` items, Sonnet called
+  a tool that doesn't exist (`kg_abstain`) before its JSON abstention, and the "unknown
+  tool" reply was rejected as unparseable. Both scored 1.0, and no evidence was
+  involved.
+- **Abstention.** Neither model abstained wrongly on a `yes` or `partial` item.
+  - `no` items: Sonnet abstained on 44 of 50, against 41. Both models answered 4 of
+    them; Haiku alone answered 5, Sonnet alone 2.
+  - Every `no`-item answer, in both models, was flagged, listed the gap in
+    `unsupported_parts` and scored 0. On the items read, the two models had seen the
+    same decisive evidence, so the difference is the reply form (an answer saying
+    "none" vs an abstention), as in run 1's repeats.
+  - `correctable`: Sonnet 5 abstentions (0.7), 2 corrected answers (1.0) and 3 parse
+    failures; Haiku 6, 2 and 2.
+- **Precision.** Sonnet paid no precision penalty: of 137 answers on items other than
+  `no`, 3 had N > 0 (each N = 1, a phenotype of a related disease) and none had N > 3.
+  Every Sonnet trace scores the same under v0, v1 and v1.1. Haiku paid it once in 134
+  (`q-6a35d55e2332`, 0.444). On that item Sonnet saw the parent-disease link, didn't
+  list the parent's drugs, and scored 1.0. Across both models, the penalty charged 1 of
+  271 answers on items other than `no`, none of which stated an unsupported fact.
+- **Merged claims.** Sonnet had 1 (`q-4888067c3dd7`, which Haiku merged the same way;
+  0.5), against Haiku's 9. On 7 of the bridge items where Haiku scored 0.5, the cause
+  was a merged claim, and Sonnet wrote one claim per edge from the same retrieval. Merged
+  claims are mostly a Haiku habit.
+- **Tool use.** 4.8 calls per rollout, against 5.2, and 8 budget hits against 5.
+  - 12 `get_edge` calls on IDs no earlier result showed, in 4 rollouts, against 1 in 1.
+    Three are the next ID after a "Showing 20 of 21" (or 22) page.
+  - On `q-557b9b3af18f`, Sonnet read off a truncated page that a disease's edges have
+    consecutive IDs, ordered by the other end's ID. It guessed where the two genes'
+    edges would sit and found one gold edge on its fourth guess. It then ran out of
+    budget before reaching the other (0.5; Haiku 1.0).
+  - The evidence is retrieved and counted correctly, so this is not a reward exploit.
+    It is a way around the page cap, and the skip-ahead probing verification run 3 saw.
+- **Direction.** On `q-3a579fbf59ba` (`fp_reversed.disease_disease`), both models read
+  the edge's display label `parent-child` as subject = parent, but the store orients
+  these edges child → parent. Both claimed the stored triple, so the reward correctly
+  scores it as the correction (Sonnet 1.0; Haiku a parse failure whose JSON would score
+  1.0). Haiku's prose says the edge confirms the premise, though, and Sonnet's
+  `answer_text` contradicts itself. Free text isn't scored, so the reward can't see a
+  wrong reading of direction behind a correct triple.
+
+Run outputs, per-chunk and combined summaries, the comparison and the trace reading
+stay in `outputs/sonnet-train-2026-11-21/` (gitignored).

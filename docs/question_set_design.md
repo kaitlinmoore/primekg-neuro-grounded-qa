@@ -4205,6 +4205,9 @@ with generator 1.2.0 (same targets, quotas, split seed and filters, no
   `manifest.json` `9630cdca765d…`. The generator 1.1.0 set (`train.jsonl`
   `caf0480d…`), which train runs 1 and 2 used, is archived unread under
   `$NGQ_DATA_DIR/items-archive/generator-1.1.0/primekg-2.1-6d869fa6bb10/`.
+- Accepted as a limitation of option G (Kaitlin, 2026-11-21): train loses its
+  subtype-bridge items (`mh_bridge.subtype_assoc` 2 → 0, `un_bridge.subtype_assoc`
+  4 → 2).
 
 ### Not measured
 
