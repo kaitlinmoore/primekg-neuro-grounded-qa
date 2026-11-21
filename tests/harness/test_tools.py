@@ -154,7 +154,7 @@ def test_budget_counts_per_rollout_through_the_state_channel():
     ts = make_toolset(max_calls=2)
     mcp = MCPServer("kg")
     ts.register(mcp)
-    rollout_a, rollout_b = FakeStateChannel(ts), None
+    _rollout_a, rollout_b = FakeStateChannel(ts), None
 
     async def call_edge():
         result = await mcp.call_tool("get_edge", {"edge_id": "E:000001"})

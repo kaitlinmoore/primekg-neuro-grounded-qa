@@ -43,7 +43,7 @@ from .stub_endpoint import StubEndpoint, Turn, calls, final, scripted, tool_call
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "data"))
-from qgen.view import load_train
+from qgen.view import load_train  # noqa: E402 -- importable only after the sys.path insert above
 
 ITEMS_DIR = os.environ.get("NGQ_ITEMS_DIR")
 API_KEY_VAR = "NGQ_STUB_API_KEY"
