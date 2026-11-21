@@ -163,3 +163,79 @@ held-out item was loaded.
   total.
 
 Run outputs, per-run summaries and the comparison stay in `outputs/` (gitignored).
+
+## Train run 1 (Haiku, reward v1.1) (2026-11-21)
+
+Exploratory, on **train** items only; not results. The first real-model run on the
+whole train split and the first under reward v1.1. No instrument changed: reward,
+prompt, tools, parser, store and items are as for verification run 3.
+
+**What ran.** `claude-haiku-5-5` through `scripts/run.sh`, with verification run 3's
+endpoint, harness, caps and default sampling. Pass A: one rollout on each of the 200
+train items (`train.jsonl`, sha256 `caf0480d…`). Pass B: four more rollouts on each of
+the 50 `answerable = "no"` items (40 unanswerable, 10 false premise), selected with
+`select_items.py --answerable no --all` (sha256 `7530352ff946…`), so each has five.
+400 rollouts in all, two at a time. No held-out item was loaded. Cost about $0.88
+(6.52M input and 0.46M output tokens), against an estimate of $0.71 made from
+verification run 3 before running.
+
+**What was measured.** Reward by type, with seeded bootstrap intervals over items,
+for orientation; parse failures and strict-retrieval rejections; abstention by
+answerability class; the precision term (N, the supported facts that state no gold
+point, and the penalty) on real answers, and every trace rescored offline under v0
+and v1; behavior across the five rollouts on each `no` item; tool use. The traces
+read were every parse failure, budget hit, edge-ID probe, wrong abstention, claim
+citing two or more edges, answer with N > 0 on an item other than `no`, and every
+`no` item whose behavior changed across rollouts.
+
+**What it showed.** One rollout per item in pass A, so these are observations, not
+effects.
+
+- The plumbing held on all 400 traces: each records `reward_params.version = "v1.1"`,
+  the store `build_id` and the items hash, rescores offline to its recorded reward
+  (and `exploits.variants`' v0, v1 and v1.1 forms reproduce the reward's own), and has
+  no rejected tool result. No claim named a member ID of a grouped node.
+- Pass A mean reward 0.828 (95% interval 0.778–0.877): `single_hop` 0.833,
+  `multi_hop` 0.870, `partial` 0.900, `false_premise` 0.660, `unanswerable` 0.800.
+- **The precision penalty never applied to a real answer.** On items other than `no`,
+  6 of 127 answers had N > 0 and none had N > 3, so no penalty was charged, and every
+  trace scores the same under v0, v1 and v1.1. No answer had an unsupported fact.
+  The non-gold facts that did appear were a grouped entity's component diseases, a
+  subtype, and in one pair of items another entity with a near-identical name, added
+  as a hedge (N = 3, at the allowance). Answers on `no` items had N up to 11 (N > 3 in
+  15 of 47), where the term is recorded but not scored. On these items an honest
+  model doesn't pay the penalty. That is the affordability side of the audit, on real
+  traces.
+- **Parse failures: 16 of 200 in pass A, none in pass B.** All 16 are a sentence or
+  two before a correct JSON block. Rescored with the JSON alone, all 16 would score
+  1.0, which would put pass A's mean at 0.908. 10 are on `single_hop` items, and 10 of
+  the 16 sentences explain edge direction or display labels.
+- **Abstention.** One wrong abstention in 140 `yes` and `partial` rollouts, where
+  the model read a `disease_disease` edge's direction the other way round with both
+  gold edges in hand. On `correctable` items: six abstentions (0.7), two answers with
+  the correction (1.0), one denial in text without a cited correction (0), and one
+  parse failure.
+- **Repeat rollouts on `no` items.** 203 of 250 rollouts abstained (81%). 28 items
+  abstained all five times, 2 never did, and 20 changed between abstaining and
+  answering. Every answer on a `no` item said the requested set is empty, cited only
+  true edges and listed the gap in `unsupported_parts` (47 of 47). None claimed a
+  false overlap. On 18 of the 20 changing items, an answering rollout saw the same
+  evidence as an abstaining one, often through identical calls, so the flip is a
+  choice of reply form rather than of evidence. The answer shapes were: every
+  retrieved edge plus "none shared"; one or two token context claims; no claims, only
+  the flag; a neighboring edge offered for the missing one; and hedges about
+  completeness the evidence had already settled. No `no`-item reply had prose
+  outside the JSON or a merged claim.
+- **Merged claims.** Six `multi_hop` answers, each complete and correct, cited two
+  edges in one claim whose triple states only one of them. Each scored 0.5. The
+  prompt says each claim states one fact; the extra cite costs nothing.
+- **Tool use.** 5.2 calls per rollout in pass A and 5.5 in pass B. 15 rollouts went
+  past the 8-call budget, 13 of them on `no` items, mostly by checking past lists that
+  had already settled the question. One cost reward: a bridge item through a hub
+  disease, where a call spent on the hub's truncated first page left no call for one
+  gold partner (0.5). There were three edge-ID probes, each the next sequential ID
+  after a "Showing 20 of 21" page; none changed a reward. No "Unknown relation" note
+  appeared.
+
+Run outputs, summaries, the analysis and the trace reading stay in `outputs/`
+(gitignored).
