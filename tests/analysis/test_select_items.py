@@ -118,3 +118,31 @@ def test_all_without_filters_takes_the_whole_file(tmp_path):
     lines = fixture_lines()
     sel = si.select(items_dir(tmp_path, lines), 1, "s1", tmp_path / "out", take_all=True)
     assert sel["n_items"] == len(lines)
+
+
+def test_ids_with_all_takes_exactly_those_items_in_file_order(tmp_path):
+    lines = fixture_lines()
+    ids = [json.loads(line)["id"] for line in lines]
+    wanted = [ids[-1], ids[0]]  # given out of file order
+    out = tmp_path / "out"
+    sel = si.select(items_dir(tmp_path, lines), 1, "s1", out, take_all=True, ids=wanted)
+    written = (out / "items.jsonl").read_text().splitlines()
+    assert written == [lines[0], lines[-1]]  # byte for byte, file order
+    assert sel["ids"] == sorted(wanted) and sel["n_items"] == 2
+
+
+def test_ids_filter_refuses_an_unknown_id(tmp_path):
+    lines = fixture_lines()
+    known = json.loads(lines[0])["id"]
+    with pytest.raises(ValueError, match="q-not-there"):
+        si.select(items_dir(tmp_path, lines), 1, "s1", tmp_path / "out", take_all=True,
+                  ids=[known, "q-not-there"])
+
+
+def test_ids_cli_option(tmp_path):
+    lines = fixture_lines()
+    known = json.loads(lines[1])["id"]
+    out = tmp_path / "out"
+    assert si.main(["--items-dir", str(items_dir(tmp_path, lines)), "--ids", known, "--all",
+                    "--out", str(out)]) == 0
+    assert (out / "items.jsonl").read_text().splitlines() == [lines[1]]
