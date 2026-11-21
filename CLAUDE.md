@@ -31,6 +31,7 @@ A Prime Intellect Verifiers (v1) environment that rewards answering Alzheimer's-
 - Graph data lives in `$NGQ_DATA_DIR` (`~/data/ngq`, set by `.envrc`), shared by every checkout and worktree: raw PrimeKG/OptimusKG downloads, the download manifest, duckdb builds and measurement results. It stays out of git.
 - uv; Python 3.11; `verifiers==0.4.1`, imported as `import verifiers.v1 as vf`; `prime==0.22.0` through `uv tool install` (not a project dependency).
 - Layout: a virtual uv workspace root (tests, docs, configs, scripts, dev tools) plus the environment package `environments/neuro_grounded_qa/`, the only thing that ships to the Hub (ID `neuro-grounded-qa`).
+- Before pushing, run `uv run ruff check` and `uv run pytest -q`. CI (`.github/workflows/ci.yml`) runs both on every PR and every push to `main`.
 
 ## Working from a handoff
 Tasks on this project come as handoff files in `handoffs/`, which exists only on my machine and is gitignored. State doc: `claude/orchestrator_state.md` in the "Verifiers | Prime Intellect" claude.ai Project.

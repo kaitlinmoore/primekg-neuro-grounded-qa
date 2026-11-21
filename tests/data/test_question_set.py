@@ -397,7 +397,7 @@ def test_typed_name_rule_rejects_a_same_type_duplicate(prober):
 
     hits = [Entity(id="A", name="Same", type="drug"), Entity(id="B", name="same", type="drug"),
             Entity(id="C", name="Same", type="exposure")]
-    search = lambda _text: hits
+    search = lambda _text: hits  # noqa: E731 -- a one-line stub search function
     assert qc.typed_name_check(search, hits[0]).reason == "shared_name_in_type"
     assert qc.typed_name_check(search, hits[1]).reason == "not_first_of_type"
     assert qc.typed_name_check(search, hits[2]).ok
