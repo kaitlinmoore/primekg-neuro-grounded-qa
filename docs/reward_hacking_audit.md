@@ -1,6 +1,6 @@
 # Reward-hacking audit
 
-How far can the grounding reward be gamed? This document records four parts.
+How far can the grounding reward be gamed? This document records five parts.
 
 - **Part 1**: scripted exploit policies run through the real pipeline, and what
   **reward v0** gives each one next to an honest oracle and always-abstain.
@@ -15,6 +15,8 @@ How far can the grounding reward be gamed? This document records four parts.
   supported facts instead of all facts), the exploit v1 opened run as live policies,
   v1.1 adopted and every policy remeasured under it, and each no-gold policy's gap
   share against the `targeted` reference (see "Part 4").
+- **Part 5**: every policy rerun under v1.1 on the regenerated train set (generator
+  1.2.0), to check part 4's figures and verdicts on the new items (see "Part 5").
 
 Parts 1 and 2 don't change the reward: their numbers are **v0 results**. Part 3 is the
 reward change to v1 and its remeasurement; part 4 the change to v1.1 and its
