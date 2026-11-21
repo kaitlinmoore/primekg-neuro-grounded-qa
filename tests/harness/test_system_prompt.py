@@ -93,6 +93,35 @@ def test_prompt_says_to_keep_the_order_of_directed_edges():
     assert '"directed" (true or false)' in PROMPT  # the payload field is named
 
 
+def test_prompt_says_where_remarks_go():
+    """Remarks about the evidence go inside the JSON object. The sentence follows the
+    no-text-outside rule in the same paragraph, before the examples; it names only keys
+    the schema has, and it doesn't loosen the parser (text outside is still a failure)."""
+    remark = (
+        'Put any remarks about the evidence, such as notes on edge direction or relation '
+        'labels, in "answer_text" or "reason", never outside the JSON object.'
+    )
+    assert PROMPT.count(remark) == 1
+    [paragraph] = [line for line in PROMPT.splitlines() if remark in line]
+    assert paragraph.startswith("When you are done, your final message must contain only one JSON object")
+    assert paragraph.index("makes the whole reply unreadable.") < paragraph.index(remark)
+    assert PROMPT.index(remark) < PROMPT.index(EXAMPLES[0])
+    assert {"answer_text", "reason"} <= set(Answer.model_fields) | set(Abstain.model_fields)
+    assert isinstance(parse_output(f"A note on direction.\n{EXAMPLES[1]}"), ParseFailure)
+
+
+def test_directed_edge_bullet_is_unchanged():
+    """The directed-edge bullet is left as it was; no line says what the order means."""
+    bullets = [line for line in PROMPT.splitlines() if '"directed": true' in line]
+    assert bullets == [
+        '- Edges with "directed": true must be stated with subject and object in the order '
+        "the tool result shows; other edges may be stated in either order."
+    ]
+    lowered = PROMPT.lower()
+    for word in ("narrower", "broader", "parent", "child"):
+        assert word not in lowered, word
+
+
 def test_prompt_states_strict_citations():
     assert (
         '- Every ID in "cites" must come from your own tool results; a claim with any '
@@ -128,7 +157,9 @@ FORMAT_LINE = (
     "When you are done, your final message must contain only one JSON object, with no "
     "text before or after it: no introduction, no summary, no notes. The object may be "
     "wrapped in one ```json code block, with nothing outside the block. Any other text "
-    "in the final message makes the whole reply unreadable. The object is either an answer:"
+    "in the final message makes the whole reply unreadable. Put any remarks about the "
+    'evidence, such as notes on edge direction or relation labels, in "answer_text" or '
+    '"reason", never outside the JSON object. The object is either an answer:'
 )
 
 CHOICE_RULES = [
