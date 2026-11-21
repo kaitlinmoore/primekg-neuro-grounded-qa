@@ -287,7 +287,7 @@ def test_setup_writes_provenance_into_trace_info():
             "flag_only_counts": True,
             "mu": 1.0,
             "nongold_allowance": 3,
-            "version": "v1",
+            "version": "v1.1",
         },
     }
     # trace.info is serialized with the trace (traces.jsonl).

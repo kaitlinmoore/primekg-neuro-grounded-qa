@@ -8,8 +8,8 @@ claims are matched to the item's gold points with ``contracts.same_fact``. This 
 the instrument the reward-hacking audit targets. ``docs/reward_spec.md`` defines it.
 
 - ``scoring``: pure functions, one per component, plus ``score`` and ``aggregate``,
-  and ``RewardParams`` (the constants; ``DEFAULT_PARAMS`` is reward v1,
-  ``V0_PARAMS`` reward v0). No trace or runtime involved.
+  and ``RewardParams`` (the constants; ``DEFAULT_PARAMS`` is reward v1.1,
+  ``V1_PARAMS`` reward v1, ``V0_PARAMS`` reward v0). No trace or runtime involved.
 - ``metrics``: recorded-but-unscored metrics.
 - ``adapter``: reads a ``vf.Trace`` through the contracts, and
   ``GroundingRewardMixin`` exposes ``@vf.reward``/``@vf.metric`` methods.
@@ -29,6 +29,7 @@ from neuro_grounded_qa.reward.scoring import (
     REWARD_VERSIONS,
     SUPPORT_CHECKERS,
     V0_PARAMS,
+    V1_PARAMS,
     ClaimCheck,
     FactGroup,
     Outcome,
@@ -56,6 +57,7 @@ __all__ = [
     "REWARD_VERSIONS",
     "SUPPORT_CHECKERS",
     "V0_PARAMS",
+    "V1_PARAMS",
     "ClaimCheck",
     "Evaluation",
     "FactGroup",
