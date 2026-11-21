@@ -3771,8 +3771,8 @@ with `--env.taskset.allow_heldout true`, and refuses items from another store bu
 ## Grouped entities and edge direction
 
 **Status: option G adopted by Kaitlin on 2026-11-21, with option D's disclosure;
-implemented in generator 1.2.0 ("Adopted: option G" below). F-label stays open until
-before the freeze.** The sections from "Method" to "Not measured" are the design
+implemented in generator 1.2.0, and the item set regenerated the same day ("Adopted:
+option G" below). F-label stays open until before the freeze.** The sections from "Method" to "Not measured" are the design
 record as written on 2026-11-21 (measurements, options, recommendation), before the
 decision. Held-out items were not read; their impact is specified below as a
 counts-only check to run.
@@ -4179,6 +4179,32 @@ items the rule doesn't touch (`q-016f62d35cfe`, `q-22f8c2d773dc`, `q-cca60c56b71
 items change, and train selection excludes held-out items' facts and named-entity
 sets. With the held-out selection's facts held at generator 1.1.0's, 3 of the 4 come
 back; with only the scarcity order held, none do.
+
+**Outcome (2026-11-21).** Kaitlin accepted the cascade: selection stays a pure
+function of the pool, with no carry-over of earlier items. The set was regenerated
+with generator 1.2.0 (same targets, quotas, split seed and filters, no
+`--allow-shortfall`), and the result matched the dry run item for item:
+
+- 189 train items kept, each identical apart from `notes.generator`.
+- 11 train items replaced. **7 by the rule** (listed above). **4 by the cascade**:
+  `q-016f62d35cfe` (`sh_rel.gene/protein`), `q-22f8c2d773dc` and `q-cca60c56b714`
+  (`pa_evid2.disease_protein`) and `q-f7fb9df8db59` (`mh_bridge.drug_target_assoc`).
+  The rule doesn't touch these 4. They left because held-out selection changed 6 items,
+  and train excludes held-out facts and named-entity sets.
+- 11 added: `q-0b14365af238` (`mh_bridge.shared_protein`), `q-0dc1ca8172b5`,
+  `q-3e5616072835` and `q-6a35d55e2332` (`pa_list2`), `q-5ba1ae30775b`
+  (`un_bridge.drug_target_assoc`), `q-71b966615191` (`mh_bridge.shared_phenotype`),
+  `q-8a7f1f8a738f` (`mh_bridge.pathway_assoc`), `q-92571d0eb9c3`
+  (`un_bridge.phenotype_kind`), `q-adb4e066cb0a` and `q-e012dc4e1dfc`
+  (`pa_evid2.disease_protein`), `q-d9722ed0e269` (`sh_evid2.disease_protein`).
+- Held-out (counts only): 6 of 100 items replaced.
+- Type and disease counts are unchanged in both splits. `mh_bridge.subtype_assoc` no
+  longer has a train item (2 before): 25 valid candidates remain in the pool, against
+  496.
+- New hashes: `train.jsonl` `a39776ad3ffe…`, `heldout.jsonl` `a501dbdf7d9a…`,
+  `manifest.json` `9630cdca765d…`. The generator 1.1.0 set (`train.jsonl`
+  `caf0480d…`), which train runs 1 and 2 used, is archived unread under
+  `$NGQ_DATA_DIR/items-archive/generator-1.1.0/primekg-2.1-6d869fa6bb10/`.
 
 ### Not measured
 
