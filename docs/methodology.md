@@ -239,3 +239,56 @@ effects.
 
 Run outputs, summaries, the analysis and the trace reading stay in `outputs/`
 (gitignored).
+
+## Train run 2 (Haiku, remarks sentence) (2026-11-21)
+
+Exploratory, on **train** items only; not results. One instrument changed. The system
+prompt gained one sentence saying where remarks go: "Put any remarks about the evidence,
+such as notes on edge direction or relation labels, in "answer_text" or "reason", never
+outside the JSON object." The parser stayed strict. A second line, saying what a directed
+edge's order means, was considered and deferred. Some grouped-disease edges read
+broader → narrower by name, because a grouped node's edge takes its orientation from one
+member pair; a separate data design will cover that.
+
+**What ran.** Train run 1's pass A again: `claude-haiku-5-5`, one rollout on each of the
+200 train items (`train.jsonl`, sha256 `caf0480d…`), same command and settings. The
+resolved configs differ only in the output directory. The sentence adds 48 prompt tokens
+per model call. Cost about $0.42 (3.16M input and 0.21M output tokens), against an
+estimate of $0.42 from run 1. No held-out item was loaded.
+
+**What was measured.** Everything run 1's pass A measured, paired by item with run 1.
+Seeded paired bootstrap intervals on the per-item reward difference are given for
+orientation. Remarks in `answer_text` or `reason` were counted by a word pattern. The
+traces read were every parse failure, every item whose reward moved by 0.5 or more, and
+the items whose gold has a grouped-entity directed edge.
+
+**What it showed.** One rollout per item in each run, so item-level changes are
+observations, not effects.
+
+- The plumbing held on all 200 traces: v1.1, the store `build_id` and the items hash
+  recorded; offline rescoring exact; no rejections.
+- Mean reward 0.861 against 0.828. The paired difference is +0.033, 95% interval −0.021
+  to +0.088. By type: `single_hop` +0.117 (0.033 to 0.217), `multi_hop` −0.070, `partial`
+  +0.067, `false_premise` +0.050, `unanswerable` 0.
+- **Parse failures: 10, against 16.** Nine are still prose before correct JSON (five of
+  the nine sentences again about edge direction), and one is malformed JSON. 12 of run
+  1's 16 now parse, each with its direction or label remark in `answer_text`, and 6 items
+  that parsed in run 1 now fail. Replies with any text outside the JSON: 9, against 16.
+- **Remarks moved inside the JSON.** `answer_text` mentions direction, display or labels
+  in 95 of 143 answers, against 43 of 138. Nothing scored reads `answer_text`, so the
+  remarks change a score only by letting the reply parse.
+- **Everything else moved within what run 1's repeat rollouts showed:**
+  - `no` items: 40 of 50 abstain, against 39. Eleven flipped, ten of which had already
+    flipped across run 1's five rollouts, nine on the same tool calls.
+  - Merged claims: 8 answers, against 6, with three items in both.
+  - Precision penalty: still never charged (N > 0 in 5 of 133 answers on items other
+    than `no`; N > 3 in none).
+  - Wrong abstention: still one, `q-3d9f124db8e3`.
+  - Budget hits: 5, against 3.
+  - One edge-ID probe.
+- **Directed edges.** No claim reversed a directed edge in either run. The items whose
+  gold involves the grouped-entity edges under review (`q-3d9f124db8e3`,
+  `q-e0684739c55c`) behaved as in run 1. On `q-e0684739c55c` and `q-95d8d5574edf`, run 2's
+  `answer_text` remarks that an edge runs the opposite way to what the names suggest.
+
+Run outputs, the comparison and the trace reading stay in `outputs/` (gitignored).

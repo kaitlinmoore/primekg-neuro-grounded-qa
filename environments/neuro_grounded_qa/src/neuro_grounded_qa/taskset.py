@@ -94,7 +94,7 @@ Relation labels in this graph: {relation_labels}. Pass these exactly as written.
 
 Only evidence returned by your own tool calls in this conversation counts. Background knowledge counts for nothing.
 
-When you are done, your final message must contain only one JSON object, with no text before or after it: no introduction, no summary, no notes. The object may be wrapped in one ```json code block, with nothing outside the block. Any other text in the final message makes the whole reply unreadable. The object is either an answer:
+When you are done, your final message must contain only one JSON object, with no text before or after it: no introduction, no summary, no notes. The object may be wrapped in one ```json code block, with nothing outside the block. Any other text in the final message makes the whole reply unreadable. Put any remarks about the evidence, such as notes on edge direction or relation labels, in "answer_text" or "reason", never outside the JSON object. The object is either an answer:
 
 {{"claims": [{{"subject_id": "...", "relation": "...", "object_id": "...", "cites": ["..."]}}], "answer_text": "...", "unsupported_parts": ["..."]}}
 
