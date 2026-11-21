@@ -1,0 +1,12 @@
+{"id": "group:g_a", "name": "a", "type": "disease"}
+{"id": "group:g_m", "name": "m", "type": "disease"}
+{"id": "group:g_p", "name": "p", "type": "disease"}
+{"id": "MONDO:0000001", "name": "r", "type": "disease"}
+{"id": "MONDO:0000002", "name": "a", "type": "disease"}
+{"id": "MONDO:0000005", "name": "a2", "type": "disease"}
+{"id": "MONDO:0000011", "name": "x1", "type": "disease"}
+{"id": "MONDO:0000099", "name": "z", "type": "disease"}
+{"id": "HP:0000001", "name": "ph", "type": "effect/phenotype"}
+{"id": "HP:0000002", "name": "ph1", "type": "effect/phenotype"}
+{"id": "NCBIGene:1", "name": "G1", "type": "gene/protein"}
+{"id": "group:g_n", "name": "n", "type": "disease"}

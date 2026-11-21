@@ -2529,6 +2529,10 @@ same 45,521 edges and 11,789 nodes, none only in one, and the same degree cap.
     `disease_disease` 366 such edges, 138 agree, 0 reversed, 228 with no OptimusKG
     edge either way; `phenotype_phenotype` 912 such edges, 790 agree, 0 reversed,
     122 with no OptimusKG edge.
+  - Edges with a grouped disease at either end (216 `disease_disease` edges) were not
+    checked here. Some of them read broader → narrower by the group's name, and three
+    form a cycle: see "Grouped entities and edge direction" (2026-11-21; measured,
+    options proposed, nothing adopted).
 - **`exposure_exposure`** (643 edges, none single-hop) stays undirected: it holds
   CTD stressor/marker links, not a hierarchy (open question).
 - **Every other edge** is undirected. Its subject is, for readability, the end
@@ -3759,3 +3763,371 @@ with `--env.taskset.allow_heldout true`, and refuses items from another store bu
   by template family.
 - The relation cap rounds down (`int(0.4 × target)`, 0 for targets under 3; the
   smallest cap at 200 + 100 is 2, held-out per false-premise kind): left as is.
+
+## Grouped entities and edge direction
+
+**Status: design record, 2026-11-21. Measurements, options and a recommendation;
+proposed, not adopted.** No store, item, generator, reward, prompt or tool code
+changed. Held-out items were not read; their impact is specified below as a
+counts-only check to run.
+
+**The problem.** The store flags `disease_disease` and `phenotype_phenotype` edges
+`directed` and stores them subject = child, object = parent ("Direction" above). For
+pairs of single MONDO or HPO terms that holds wherever OptimusKG can check it. A
+PrimeKG grouped disease (`group:<slug>`) merges several MONDO terms, and its edge to
+another disease comes from one member pair, oriented by whichever row comes first in
+`kg.csv`. Read at the level of the entity the model sees, such an edge can run
+broader → narrower (`E:014579`, Alzheimer disease → familial Alzheimer disease), and
+three edges form a cycle. Train run 1's one wrong abstention on an answerable item
+(`q-3d9f124db8e3`) was on such an edge.
+
+### Method
+
+`scripts/data/measure_group_direction.py` (tests:
+`tests/data/test_measure_group_direction.py`, on a hand-built fixture). It reads the
+store (`primekg-neuro-c95`, build `primekg-2.1-6d869fa6bb10`), OptimusKG 3.2's
+`DIS-DIS/PARENT` and `PHE-PHE/PARENT` edges (parent → child; 47,892 disease edges,
+including the EFO terms Open Targets uses) and, for gold IDs, the train items through
+the train-only loader. It prints IDs, template IDs and store entity names, never item
+text.
+
+**Classification rule.** For each directed edge, S and O are the subject's and the
+object's MONDO/HP IDs in OptimusKG form (a group's members from
+`entity_sources.jsonl`; a plain term is a one-member set). "X contains Y" means every
+member of Y has a member of X as ancestor-or-self, over OptimusKG's ancestor closure.
+
+| Class | Rule | Reading |
+|---|---|---|
+| `agrees` | O contains S; S doesn't contain O | the stored order holds at group level |
+| `reversed` | S contains O; O doesn't contain S | the stored order is backwards at group level |
+| `equivalent` | each contains the other | (none found) |
+| `mixed` | no containment; member pairs run both ways | the group straddles the other end |
+| `partial_agree` | no containment; some pair runs the stored way, none the other | includes groups with a member OptimusKG lacks |
+| `partial_reversed` | mirror of `partial_agree` | (none found) |
+| `no_ancestry` | both ends have a member OptimusKG knows; no pair related | OptimusKG can't decide |
+| `unknown` | an end has no member OptimusKG knows | OptimusKG can't decide |
+
+A second reading, **head member**, replaces a group by the member(s) whose name
+equals the group's name (what a reader takes "Alzheimer disease" to mean) and applies
+the same rule. Cycles: every elementary directed cycle over all 1,494 directed edges
+(strongly connected components, then a depth-first search).
+
+### Results
+
+- **Where grouped entities occur.** Among directed relations, only in
+  `disease_disease`: 216 of its 582 edges have a grouped end. `phenotype_phenotype`
+  (912) has none; groups are MONDO diseases.
+- **Classes**
+
+  | Relation | Ends | agrees | reversed | mixed | partial_agree | no_ancestry | unknown | Total |
+  |---|---|---|---|---|---|---|---|---|
+  | `disease_disease` | grouped | 18 | 1 | 2 | 62 | 21 | 112 | 216 |
+  | `disease_disease` | plain | 141 | 0 | 0 | 0 | 3 | 222 | 366 |
+  | `phenotype_phenotype` | plain | 828 | 0 | 0 | 0 | 40 | 44 | 912 |
+
+  Of the 62 `partial_agree` grouped edges, 27 would be `agrees` if members unknown to
+  OptimusKG were ignored. The head-member reading finds the same edges against the
+  stored order (it turns the two `mixed` edges into `reversed`, and splits
+  `partial_agree` into 23 agrees, 22 no ancestry, 11 partial and 6 unknown).
+- **Coverage is the binding limit.** OptimusKG decides 83 of the 216 grouped edges
+  (`agrees`, `reversed`, `mixed`, `partial_agree`) and confirms the stored order at
+  group level for 18. For the other 133 it has no ancestry either way or lacks an end.
+  Its disease hierarchy is Open Targets' slice of MONDO and EFO, not MONDO itself.
+- **Cycles.** Exactly one, of length 3, among all 1,494 directed edges:
+  `MONDO:0005144` familial amyotrophic lateral sclerosis → (`E:014202`)
+  `group:amyotrophic_lateral_sclerosis` → (`E:014583`)
+  `group:juvenile_amyotrophic_lateral_sclerosis` → (`E:014667`) back to the start.
+  No pair is stored both ways.
+- **Grouped edges against the stored order, or on the cycle** (all of them):
+
+  | Edge | Subject → object (stored) | Class | Head class | Cycle | Members S/O (unknown to OptimusKG) |
+  |---|---|---|---|---|---|
+  | `E:014202` | `MONDO:0005144` familial amyotrophic lateral sclerosis → `group:amyotrophic_lateral_sclerosis` amyotrophic lateral sclerosis | unknown | unknown | yes | 1/21 (1/13) |
+  | `E:014579` | `group:alzheimer_disease` Alzheimer disease → `group:familial_alzheimer_disease` familial Alzheimer disease | mixed | reversed | | 21/2 (16/1) |
+  | `E:014583` | `group:amyotrophic_lateral_sclerosis` amyotrophic lateral sclerosis → `group:juvenile_amyotrophic_lateral_sclerosis` juvenile amyotrophic lateral sclerosis | mixed | reversed | yes | 21/2 (13/1) |
+  | `E:014667` | `group:juvenile_amyotrophic_lateral_sclerosis` juvenile amyotrophic lateral sclerosis → `MONDO:0005144` familial amyotrophic lateral sclerosis | unknown | unknown | yes | 2/1 (1/1) |
+  | `E:014692` | `group:neurodegeneration_with_brain_iron_accumulation` neurodegeneration with brain iron accumulation → `MONDO:0017998` PLA2G6-associated neurodegeneration | reversed | reversed | | 8/1 (2/0) |
+
+- **Edges that read backwards by name but that the rule can't decide.** Four more
+  edges read broader → narrower by their names, and OptimusKG has no member pair to
+  confirm or reject them: `E:014582` amyotrophic lateral sclerosis → frontotemporal
+  dementia with motor neuron disease (`no_ancestry`), and, from
+  `group:frontotemporal_dementia_and_or_amyotrophic_lateral_sclerosis`, `E:014638` to
+  familial amyotrophic lateral sclerosis (`unknown`), `E:014639` to behavioral
+  variant of frontotemporal dementia (`no_ancestry`) and `E:014640` to frontotemporal
+  dementia with motor neuron disease (`partial_agree`; head `no_ancestry`). That group
+  holds the general term (`MONDO:0030923`, named like the group) and its eight
+  numbered types. An edge from any member becomes the group's edge, and PrimeKG
+  doesn't record which member it came from. These edges are in the gold of the two
+  reopened items.
+- **Plain `disease_disease` edges** are not part of this problem: 141 agree and none
+  is reversed; 225 can't be checked against OptimusKG (no counterpart).
+
+### Root cause in code
+
+- **PrimeKG loses member provenance.** Grouped nodes are merged before `kg.csv` is
+  written, so a group pair has the usual two rows (each the other's reverse). The
+  first may be one member pair's parent → child row or the appended reverse of a member
+  pair running the other way. Nothing in `kg.csv` tells them apart.
+- **The builder takes the first row.** `build._canonical` keeps the first row's
+  orientation (`arg_min(x_index, rn)`), and `build.orient` reads the child from it by
+  `HIERARCHY_CHILD_END` (`"y"` for `disease_disease`), for grouped and plain pairs alike.
+- **The checks don't look at groups.** `check_store.check_raw` re-derives the child by
+  the same file-order rule, so it confirms the rule was applied, not that it is right.
+  `check_store.check_optimuskg` compares only edges whose two ends are plain MONDO or
+  HP CURIEs (`ps[0] == src and po[0] == src`), so every `group:` edge is skipped. The
+  relation-level inventory (`scripts/data/direction.py`) also measured agreement on
+  plain IDs only. Nothing checks for cycles.
+- **The risk was known but carried only partway.** The candidate tables noted that "a
+  grouped neighbor can read as a parent". That led to the filter keeping
+  reversed-subtype premises off grouped edges (`qgen.candidates.domain_problem`), but
+  not to a change in the `directed` flag or in gold.
+
+### Consequences shared by the options
+
+1. **`build_id`.** Any store change (every option except D and G) means a new rule in
+   `build.RULES`, a `BUILDER_VERSION` bump and a new `build_id`. Items live under
+   `items/<build_id>/`, and `load_items` refuses items from another build. Even the
+   wording of `RULES["hierarchy"]["convention"]` ("subject = child (narrower) …") is
+   hashed into the `build_id`, so correcting it is a store change.
+2. **Item IDs and the split.** `qgen.checks.item_id` hashes the `build_id`, and
+   `split_of` hashes the item ID. Under a new `build_id` every item gets a new ID and a
+   new split draw. Measured on train only: with three hypothetical new build IDs, 66,
+   63 and 65 of the 200 current train items' candidates would be held out. By the
+   same hash, about a third of the held-out candidates would move to train (not
+   measured). That breaks the never-examined rule: items read during development
+   would become held-out, and held-out ones would be read. **Mitigation** (a generator
+   change; decision needed): compute the split key, and optionally the item ID, under
+   a pinned namespace, the current `build_id`. Template parameters are entity IDs,
+   which don't depend on the build, so every candidate keeps its split and unaffected
+   items keep their IDs; the item's `build_id` field still binds it to its store.
+3. **One `directed` value per relation.** Four places assume it: the store builder;
+   `qgen.checks.relation_directedness` (raises on a mixed relation, so `generate` and
+   `check` stop); `QuestionItem` validation (rejects mixed flags on one relation within
+   an item; a shared contract); and `reward.scoring.directed_relations` (a relation is
+   directed for claim deduplication if any retrieved edge of it is). Options A, A2, B,
+   B2 and F mix flags on `disease_disease`. They need one of two changes. Either relax
+   all four, which is a contract and a reward change: with mixed flags and no reward
+   change, two claims stating one undirected grouped edge in both orders count as two
+   supported facts, reopening closed candidate 7 on those edges. Or give the undirected
+   edges a **derived label** (A-label, F-label: `disease_disease/grouped`, in the style
+   of `drug_protein/<display_relation>`). That keeps one flag per label and leaves the
+   contract and the reward as they are, but the model sees a new relation label.
+4. **Generator.** Every option except D needs a `GENERATOR_VERSION` bump. For per-edge
+   flags: `candidates.py` hard-codes `directed = rel == "disease_disease"` (`fp_evid`
+   premises, `pa_evid2` gap triples) and `True` (`fp_reversed`). `list_edges` reads
+   `disease_disease:children`/`:parents` by position without checking `directed`.
+   `role()` returns None on an undirected edge, so subtype bridges skip it.
+   Re-orienting (B, B2) also puts the store at odds with `FullGraph.present_triples`,
+   which applies the file-order rule to the full graph.
+5. **Builder and checks.** A, B and C (and their narrow forms) need a reference
+   hierarchy at build time. OptimusKG is CC BY-NC-SA 4.0 and decides 83 of 216 grouped
+   edges; MONDO itself (CC BY 4.0) would be a new data source (download, manifest,
+   README). E, F, F-label and G need no reference. `check_store`'s
+   `hierarchy_not_child_to_parent` check requires every hierarchy edge to be directed,
+   so it changes with any flag option. Under every option, a cycle check and a
+   grouped-edge check belong in `check_store`.
+6. **Manifest.** Store options bring a new `build_id` and store `build.json` hash; all
+   options but D bring a new generator version; a pinned namespace adds a field to the
+   split block.
+
+### Options
+
+Counts are from the script. "Train items" are the items whose gold, premise or gaps
+touch a changed edge, plus items whose template reads a hierarchy role (child or
+parent) at a named entity with a changed `disease_disease` edge
+(`hierarchy_roles_read`). That second group may or may not change on regeneration;
+`q-3a579fbf59ba` is in it conservatively (its own gold edge, `E:014250`, is plain).
+Renumbering follows the builder's rule (`E:` numbers in (relation, subject, object)
+order). "Undirected" keeps the stored subject and object.
+
+| Option | Rule | Edges changed | `E:` IDs renumbered (outside `disease_disease`) | Train gold IDs renumbered / dropped | Mixed flags on `disease_disease` | Cycle gone | Train items |
+|---|---|---|---|---|---|---|---|
+| A | A grouped-end edge stays directed only if `agrees` and not on a cycle; the rest become undirected | 198 undirected | 0 | 0 / 0 | yes | yes | 6 |
+| A2 | Undirected only if `reversed`, `mixed`, `partial_reversed` or on a cycle | 5 undirected | 0 | 0 / 0 | yes | yes | 1 |
+| B | `agrees` kept; `reversed` re-oriented; the rest undirected | 197 undirected, 1 re-oriented | 222 (0) | 7 / 0 | yes | yes | 6 |
+| B2 | `reversed` re-oriented; `mixed`, `partial_reversed` and cycle edges undirected; the rest kept | 4 undirected, 1 re-oriented | 222 (0) | 7 / 0 | yes | yes | 1 |
+| C | Drop every grouped-end edge that isn't `agrees` | 198 dropped | 31,136 (30,763) | 221 / 6 | no | yes | 10 |
+| C2 | Drop only the five edges in the table above | 5 dropped | 31,315 (30,763) | 227 / 0 | no | yes | 2 |
+| D | No store change; disclose | 0 | 0 | 0 / 0 | no | no | 0 |
+| E | Every `disease_disease` edge undirected | 582 undirected | 0 | 0 / 0 | no | yes | 11 |
+| F | Every grouped-end `disease_disease` edge undirected, with no reference | 216 undirected | 0 | 0 / 0 | yes | yes | 8 |
+| A-label | A, with the undirected edges relabelled `disease_disease/grouped` | 198 relabelled | 556 (0) | 16 / 0 | no | yes | 6 |
+| F-label | F, relabelled the same way | 216 relabelled | 384 (0) | 10 / 0 | no | yes | 8 |
+| G | Store unchanged; the generator keeps grouped-end hierarchy edges out of items (gold, premises, gaps, role traversal) | none in the store; 216 kept out of items | 0 | 0 / 0 | no | no (stays in the store) | 8 |
+
+**Train items by option** (ID, template, reason):
+
+- **A, B, A-label:** gold changes on `q-3d9f124db8e3` (`mh_bridge.subtype_assoc`),
+  `q-95d8d5574edf` (`mh_bridge.subtype_assoc`; under A and B it would also hold mixed
+  flags) and `q-e0684739c55c` (`pa_list2`). Role templates at a changed entity:
+  `q-366b0cf33e2c` and `q-c77cd2d1262d` (`un_bridge.subtype_assoc`), and
+  `q-3a579fbf59ba` (`fp_reversed.disease_disease`).
+- **A2, B2:** `q-c77cd2d1262d` (role template). Both reopened items are untouched:
+  OptimusKG has no evidence against their gold edges.
+- **C:** A's six (with gold dropped on `q-3d9f124db8e3`, `q-95d8d5574edf` and
+  `q-e0684739c55c`), plus four whose recorded route lists the neighbors of an entity
+  that loses edges, so truncation and pagination can change: `q-06969efca173`
+  (`sh_evid.disease_disease`), `q-41fad2812953` and `q-d0cca44e68b5` (`pa_list2`), and
+  `q-dbf2e7e3d4fe` (`un_rel.drug`). 221 train gold edge IDs renumber.
+- **C2:** `q-c77cd2d1262d` (role template, route), `q-dbf2e7e3d4fe` (route).
+- **E:** gold becomes undirected on `q-06969efca173`, `q-10db1870a105`,
+  `q-3a579fbf59ba`, `q-3d9f124db8e3`, `q-95d8d5574edf`, `q-bbc500b5a29c` and
+  `q-e0684739c55c`. On `q-3a579fbf59ba` the reversed-subtype premise becomes the same
+  fact as the gold, so the item is invalid, and so is the whole
+  `fp_reversed.disease_disease` template. Role templates: `q-366b0cf33e2c`,
+  `q-40aa24aa9df5`, `q-c77cd2d1262d` and `q-dad92248a48e`. Subtype bridges and
+  child/parent lists lose their role everywhere.
+- **F, F-label, G:** gold on a grouped-end edge: `q-10db1870a105` and
+  `q-bbc500b5a29c` (`pa_list2`; mixed flags under F), `q-3d9f124db8e3`,
+  `q-95d8d5574edf` and `q-e0684739c55c`. Role templates: `q-366b0cf33e2c`,
+  `q-3a579fbf59ba` and `q-c77cd2d1262d`.
+- **Regeneration, not individual edits.** Under every option but D, affected items are
+  replaced by regenerating, never edited one by one, and replacements come from the
+  same split's pool. Only regenerating settles whether a role template at a group
+  survives. Three main seeds are groups (Alzheimer disease, Parkinson disease, ALS),
+  so F, F-label and G remove their subtype questions from the pool, and A and B
+  remove most of them.
+
+**The two reopened items under each option.** `q-3d9f124db8e3`
+(`mh_bridge.subtype_assoc`, gold `E:014582`) and `q-e0684739c55c` (`pa_list2` with a
+`disease_disease:parents` clause, gold `E:014638`–`E:014641`, all grouped):
+
+| Option | `q-3d9f124db8e3` | `q-e0684739c55c` |
+|---|---|---|
+| A, B, E, F | gold edge undirected; a subtype bridge needs a child role, so not regenerated in this form | gold undirected; the parents clause needs a role (once `list_edges` checks it), so not regenerated in this form |
+| A-label, F-label | gold relabelled; not regenerated in this form | same |
+| C | gold edge dropped | gold edges dropped |
+| A2, B2, C2 | unchanged, still directed in the name-backwards order | unchanged |
+| D | unchanged; kept with the limitation disclosed, unless removed by a separate decision | same |
+| G | not regenerated (its gold is a grouped-end hierarchy edge) | same |
+
+### Earlier work
+
+- **Train run 1** (Haiku, 400 rollouts) and **train run 2** (the remarks-line run, 200
+  rollouts), read from the traces (a regex over tool results and the final message;
+  rewards as recorded):
+
+  | Run | Rollouts retrieving a grouped-end `disease_disease` edge | Rollouts citing one | Citing rollouts below reward 1 |
+  |---|---|---|---|
+  | run 1, pass A | 33 | 8 | 2: `q-c815dad1926f`, `q-ce6dc07653be` (answers on `no` items; not direction) |
+  | run 1, pass B | 41 | 10 (7 items) | the same two items |
+  | run 2, pass A | 28 | 10 | 1: `q-84884bd4f56b` (abstained on a correctable item, 0.7; not direction) |
+
+  Citing items in run 1 pass A: `q-10db1870a105`, `q-366b0cf33e2c`, `q-6c38c7eb65c6`,
+  `q-95d8d5574edf`, `q-bbc500b5a29c`, `q-c815dad1926f`, `q-ce6dc07653be` and
+  `q-e0684739c55c`. The one direction-related failure is the wrong abstention on
+  `q-3d9f124db8e3`, in both runs; it cites no grouped edge. Per-option lists are in
+  the working outputs (`outputs/group-direction-2026-11-21/trace_impact.json`).
+- **Recorded rewards stay valid** as records of the build they ran on. They weren't
+  rescored here. By the reward's definitions, making an edge undirected can turn an
+  unsupported reversed claim into a supported one, never the reverse. Under C and C2,
+  traces cite IDs that are renumbered or gone, so rescoring needs an ID map.
+- **Comparability of runs 1 and 2.** They share the build and items, so they stay
+  comparable with each other under every option. A run after a store option is on
+  another build and item set: a per-item comparison needs the pinned namespace (stable
+  IDs) and leaves out the affected items. After G, unaffected items keep their IDs and
+  per-item comparison works directly.
+- **The audit.** Every figure in `docs/reward_hacking_audit.md` was computed on this
+  build and item set. Under D nothing moves. Under any other option the figures
+  describe a store or item set that has been replaced. Rerunning is free on the stub:
+  `exploits.run_audit` (about 10 minutes, 26–37 s per policy), `exploits.variants` and
+  `exploits.gold_completeness`. What could move: the oracle policies on affected items
+  (gold changes on 3 to 7 train items, plus role templates on 1 to 4 more); the dump
+  and probe policies where they retrieve or truncate on changed edges (C and C2); and
+  every figure, through the replaced items. Without the pinned namespace, a store
+  option replaces about a third of the train set.
+- **Docs to correct under any option, D included:** `docs/reward_spec.md`'s "stored
+  child → parent" (wording below); this document's "Direction" subsection ("subject =
+  child (narrower)"); the `neuro_grounded_qa.data` docstring and the
+  `build.HIERARCHY_CHILD_END` docstring; the learning write-up on the store.
+  `RULES["hierarchy"]["convention"]` has the same wording but is part of the
+  `build_id`, so it changes only with a store option.
+
+### Held-out: the counts-only check to run
+
+Not implemented and not run here. It would be a held-out mode of the measurement
+script, run by Kaitlin. It reads `heldout.jsonl` inside the generator's no-text-out
+guard (`qgen.safety.no_text_out`) and prints only:
+
+- the file's SHA-256 (to match the manifest) and its item count;
+- the number of held-out items with a hierarchy triple (gold, premise or gap), and the
+  number with a grouped-end `disease_disease` edge in gold;
+- per option, the number of held-out items affected, by reason and by template
+  family;
+- for store options without the pinned namespace, how many held-out candidates would
+  move to train under the new `build_id` (a count).
+
+It prints no item IDs, entity IDs, names or text. Regenerating the held-out split keeps
+the split seed (`ngq-split-v1`) and share. With the pinned namespace no candidate
+crosses the boundary, and held-out items the option doesn't touch keep their IDs.
+Held-out replacements come from the held-out pool and are never read, as in every
+regeneration.
+
+### Recommendation (proposed, for Kaitlin to decide)
+
+1. **Before the Sonnet run: G**, a generator rule. Keep every hierarchy edge with a
+   grouped end out of items: no gold point, premise or gap on one, and role templates
+   (subtype bridges, child/parent lists) don't traverse one. It extends the existing
+   rule that keeps reversed-subtype premises off grouped edges. The store, `build_id`,
+   `E:` IDs, item IDs and split don't change, so runs 1 and 2 stay comparable on every
+   unaffected item, and no reference data is needed. It removes the gold that a reader
+   reasoning from names would reject (both reopened items). It also removes three items
+   whose grouped gold edges agree with OptimusKG or can't be decided by it, and it
+   costs the subtype questions on the grouped main seeds, a `GENERATOR_VERSION` bump, a
+   regeneration and an audit rerun. Pair it with D's disclosure: the store still serves
+   these edges as directed, and the cycle remains.
+2. **Before the freeze, optional: F-label with the pinned namespace**, if the served
+   graph itself should stop asserting a group-level order. It needs no reference,
+   keeps one flag per label (no contract or reward change), keeps the checked plain
+   edges directed and removes the cycle. It changes the store, the `build_id` and the
+   relation labels the model sees.
+3. **Not recommended now.** A, B and C depend on OptimusKG, which decides 83 of 216
+   edges, confirms 18 and is CC BY-NC-SA. In practice they are F with 18 exceptions,
+   at the cost of a build-time data dependency. If a reference-gated rule is wanted,
+   measure against a MONDO release first. A2, B2 and C2 fix the five measured
+   contradictions and the cycle, but leave both reopened items' name-backwards gold in
+   place. E discards direction on the 141 checked plain edges and the
+   `fp_reversed.disease_disease` template. D alone keeps gold that a reader reasoning
+   from names would reject.
+4. **Under any option:** add a directed-cycle check and a grouped-edge report to
+   `check_store.py`, and correct the docs listed above.
+
+**Proposed wording for `docs/reward_spec.md`** (section 3, edge cases), replacing the
+bullet "Directed edges (`directed: true`, same-type hierarchy relations, stored child →
+parent) match in order only …":
+
+> Directed edges (`directed: true`, same-type hierarchy relations) match in order
+> only: `DIS_G subtype_of DIS_3` is not supported by the edge `DIS_3 subtype_of
+> DIS_G`. The store orients them by PrimeKG's file order: child → parent for a pair of
+> single ontology terms (checked against OptimusKG wherever it has the pair; none
+> reversed). An edge with a PrimeKG grouped disease at either end takes its order from
+> one member pair, so by the group's name it can read parent → child, and three such
+> edges form a cycle. The reward still accepts only the stored order. See "Grouped
+> entities and edge direction" in `docs/question_set_design.md`.
+
+Under F-label, the last three sentences become: "Edges with a grouped disease at either
+end carry the undirected label `disease_disease/grouped` and match in either order,
+because PrimeKG doesn't record a group-level parent–child order." A matching
+Limitations bullet would say the same in one sentence.
+
+### Not measured
+
+- **Undirected relations at groups.** A group's other edges are the union of its
+  members' edges. Grouped ends appear in `disease_protein` (844 edges),
+  `disease_phenotype_positive` (4,274), `contraindication` (241), `exposure_disease`
+  (240), `disease_phenotype_negative` (46), `indication` (45) and `off-label use` (5).
+  "Group X is associated with gene G" may hold for one member only. Train run 1
+  already showed a grouped entity's component diseases as non-gold context. Whether
+  this matters is open and wasn't measured here.
+- **A MONDO release as reference.** It would likely decide many of the 133 edges
+  OptimusKG can't. No MONDO release was downloaded for this.
+- **Regeneration.** Which role-template items survive each option, and the pool's
+  feasibility, are known only by regenerating.
+
+Reproduce:
+
+```bash
+uv run python scripts/data/measure_group_direction.py   # writes outputs/group-direction-<date>/
+uv run pytest -q tests/data/test_measure_group_direction.py
+```

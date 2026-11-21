@@ -1,0 +1,10 @@
+{"id": "E:000001", "subject": "MONDO:0000005", "relation": "disease_disease", "display_relation": "disease_disease", "object": "group:g_a", "directed": true}
+{"id": "E:000002", "subject": "MONDO:0000011", "relation": "disease_disease", "display_relation": "disease_disease", "object": "MONDO:0000002", "directed": true}
+{"id": "E:000003", "subject": "MONDO:0000099", "relation": "disease_disease", "display_relation": "disease_disease", "object": "MONDO:0000002", "directed": true}
+{"id": "E:000004", "subject": "group:g_a", "relation": "disease_disease", "display_relation": "disease_disease", "object": "MONDO:0000001", "directed": true}
+{"id": "E:000005", "subject": "group:g_a", "relation": "disease_disease", "display_relation": "disease_disease", "object": "MONDO:0000005", "directed": true}
+{"id": "E:000006", "subject": "group:g_m", "relation": "disease_disease", "display_relation": "disease_disease", "object": "group:g_n", "directed": true}
+{"id": "E:000007", "subject": "group:g_p", "relation": "disease_disease", "display_relation": "disease_disease", "object": "MONDO:0000002", "directed": true}
+{"id": "E:000008", "subject": "group:g_a", "relation": "disease_protein", "display_relation": "disease_protein", "object": "NCBIGene:1", "directed": false}
+{"id": "E:000009", "subject": "group:g_m", "relation": "disease_protein", "display_relation": "disease_protein", "object": "NCBIGene:1", "directed": false}
+{"id": "E:000010", "subject": "HP:0000002", "relation": "phenotype_phenotype", "display_relation": "phenotype_phenotype", "object": "HP:0000001", "directed": true}
