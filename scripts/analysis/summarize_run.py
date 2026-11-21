@@ -28,6 +28,13 @@ What it reports, overall, by question type (``qtype``), by template family (the
 - **Group-ID misuse**: claims whose subject or object ID is a *member* ID of a
   grouped node (``group:...``) in the store, rather than the group node itself.
   Members come from the store's ``entity_sources.jsonl``.
+- **Precision term** (reward v1 and later): the reward version each trace records,
+  and the recorded ``nongold_supported_facts`` (N), ``nongold_over_allowance``
+  (``max(0, N − a)``) and ``precision_penalty``: how many answers have N > 0 and
+  N > a, and how many pay a penalty above 0 where the reward uses it (answers on
+  items other than ``no``; the metric is recorded on ``no`` items too, but their
+  score ignores it). Traces from before v1 don't record these and are left out of
+  the counts.
 - **Offline rescore**: the saved trace rescored with the recorded
   ``reward_params`` must give the recorded reward.
 - **Provenance**: ``store_build_id``, ``items_sha256`` and ``reward_params`` present
@@ -70,6 +77,7 @@ COMPONENTS = (
 PROVENANCE_KEYS = ("store_build_id", "items_sha256", "reward_params")
 BUDGET_NOTE = "Tool call budget used up"
 UNKNOWN_RELATION_NOTE = "Unknown relation"
+PRECISION_METRICS = ("nongold_supported_facts", "nongold_over_allowance", "precision_penalty")
 NEIGHBORS_TOOL = "kg_get_neighbors"
 DEFAULT_MAX_CALLS = 8
 
@@ -146,6 +154,10 @@ class TraceRow:
     rejections_by_tool: dict[str, int]  # "reason/tool" -> n
     recorded_rejections_match: bool
     group_misuse: list[dict[str, str]] = field(default_factory=list)
+    reward_version: str = "v0"
+    nongold_supported_facts: int | None = None  # None: not recorded (before reward v1)
+    nongold_over_allowance: int | None = None
+    precision_penalty: float | None = None
     rescore: float = math.nan
     rescore_matches: bool = False
     provenance_missing: list[str] = field(default_factory=list)
@@ -263,6 +275,12 @@ def trace_row(saved: Mapping[str, Any], members: Mapping[str, str], max_calls: i
         rejections_by_tool=dict(by_reason_tool),
         recorded_rejections_match=recorded_match,
         group_misuse=_misused_ids(parsed, members),
+        reward_version=params.version,
+        nongold_supported_facts=(int(metrics["nongold_supported_facts"])
+                                 if "nongold_supported_facts" in metrics else None),
+        nongold_over_allowance=(int(metrics["nongold_over_allowance"])
+                                if "nongold_over_allowance" in metrics else None),
+        precision_penalty=metrics.get("precision_penalty"),
         rescore=rescore,
         rescore_matches=math.isclose(rescore, reward, abs_tol=1e-9),
         provenance_missing=[k for k in PROVENANCE_KEYS if k not in info],
@@ -318,6 +336,7 @@ def aggregate(rows: Sequence[TraceRow]) -> dict[str, Any]:
     for key in ("claims", "supported_facts", "unsupported_facts", "voided_claims",
                 "duplicate_claims", "stripped_cites", "root_reply_present", "root_reply_differs"):
         out[key] = sum(r.metrics.get(key, 0.0) for r in rows)
+    out.update(precision_aggregate(rows))
     out["group_misuse_claims"] = len({(r.item_id, m["claim"]) for r in rows for m in r.group_misuse})
     out["group_misuse_rollouts"] = sum(bool(r.group_misuse) for r in rows)
     out["rescore_matches"] = sum(r.rescore_matches for r in rows)
@@ -328,6 +347,28 @@ def aggregate(rows: Sequence[TraceRow]) -> dict[str, Any]:
     out["agent_seconds_mean"] = _mean([r.agent_seconds for r in rows])
     out["errors"] = sum(r.errors for r in rows)
     return out
+
+
+def precision_aggregate(rows: Sequence[TraceRow]) -> dict[str, Any]:
+    """The precision term over a group of rollouts.
+
+    Counts are over answers whose trace records the precision metrics (reward v1 and
+    later); ``precision_recorded`` says how many that is. ``precision_penalty_charged``
+    counts answers with a penalty above 0 on items other than ``no``, where the
+    reward uses it; ``precision_penalty_charged_sum`` is their summed penalty.
+    """
+    answers = [r for r in rows if r.outcome == "answer" and r.nongold_supported_facts is not None]
+    charged = [r for r in answers if r.answerable != "no" and (r.precision_penalty or 0.0) > 0]
+    return {
+        "reward_versions": dict(sorted(Counter(r.reward_version for r in rows).items())),
+        "precision_recorded": len(answers),
+        "nongold_any": sum(r.nongold_supported_facts > 0 for r in answers),
+        "nongold_over_allowance_answers": sum((r.nongold_over_allowance or 0) > 0 for r in answers),
+        "nongold_supported_facts_sum": sum(r.nongold_supported_facts for r in answers),
+        "nongold_supported_facts_max": max((r.nongold_supported_facts for r in answers), default=0),
+        "precision_penalty_charged": len(charged),
+        "precision_penalty_charged_sum": sum(r.precision_penalty or 0.0 for r in charged),
+    }
 
 
 def _group(rows: Iterable[TraceRow], key) -> dict[str, list[TraceRow]]:
@@ -459,6 +500,26 @@ def to_markdown(s: Mapping[str, Any], title: str) -> str:
                    f"{o['group_misuse_claims']} claims in {o['group_misuse_rollouts']} rollouts.")
     else:
         out.append("- Group-ID misuse: not checked (store not found).")
+    out += ["", "## Precision term (reward v1 and later)", ""]
+    versions = ", ".join(f"`{v}` {k}" for v, k in o["reward_versions"].items())
+    out.append(f"- Reward versions recorded: {versions}.")
+    if o["precision_recorded"]:
+        out.append(
+            f"- Answers recording the precision metrics: {o['precision_recorded']}. Non-gold supported "
+            f"facts N > 0 in {o['nongold_any']}, N past the allowance in "
+            f"{o['nongold_over_allowance_answers']}; N summed {o['nongold_supported_facts_sum']}, max "
+            f"{o['nongold_supported_facts_max']}.")
+        out.append(
+            f"- Precision penalty above 0 where the reward uses it (items other than `no`): "
+            f"{o['precision_penalty_charged']} answers, summed penalty "
+            f"{_fmt(o['precision_penalty_charged_sum'])}.")
+        out += [""]
+        out += _table(["type", "answers", "N > 0", "N > a", "penalty > 0", "penalty sum"], [
+            [q, g["precision_recorded"], g["nongold_any"], g["nongold_over_allowance_answers"],
+             g["precision_penalty_charged"], g["precision_penalty_charged_sum"]]
+            for q, g in s["by_qtype"].items()])
+    else:
+        out.append("- No answer records the precision metrics (traces from before reward v1).")
     out += ["", "## Rollouts", ""]
     out += _table(
         ["item", "type", "answerable", "template", "reward", "outcome", "calls", "rel. filter",
