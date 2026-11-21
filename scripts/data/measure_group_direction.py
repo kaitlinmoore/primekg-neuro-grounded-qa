@@ -459,6 +459,16 @@ def reference_id(curie: str) -> str | None:
     return CURIE_FORMAT[pre].format(int(num)) if pre in CURIE_FORMAT and num.isdigit() else None
 
 
+def member_refs(eid: str, sources: Mapping[str, dict]) -> list[str]:
+    """Reference (OptimusKG-form) IDs of a store entity: a group's members, or the
+    plain term itself; empty when none has a reference form. ``sources`` is
+    ``entity_sources.jsonl`` by entity ID."""
+    if eid.startswith(GROUP_PREFIX):
+        return [m for m in (reference_id(x["id"]) for x in sources[eid].get("members", [])) if m]
+    r = reference_id(eid)
+    return [r] if r else []
+
+
 def load_reference(db: Path) -> dict[str, tuple[dict[str, set[str]], set[str]]]:
     """OptimusKG relation -> (child -> parents, every node in that hierarchy)."""
     import duckdb
@@ -487,10 +497,7 @@ def measure(store: Path, items_dir: Path | None, reference_db: Path) -> dict:
     ref = load_reference(reference_db)
 
     def members(eid: str) -> list[str]:
-        if eid.startswith(GROUP_PREFIX):
-            return [m for m in (reference_id(x["id"]) for x in srcs[eid].get("members", [])) if m]
-        r = reference_id(eid)
-        return [r] if r else []
+        return member_refs(eid, srcs)
 
     def head(eid: str) -> list[str]:
         """The member(s) named like the group itself: what a reader takes the group to
