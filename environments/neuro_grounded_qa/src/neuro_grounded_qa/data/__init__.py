@@ -12,7 +12,9 @@ sources have their own terms).
 - :mod:`~neuro_grounded_qa.data.build`: the builder and its command line
   (``python -m neuro_grounded_qa.data.build --out <dir>``). It needs duckdb, the
   package's optional ``build`` extra. It deduplicates PrimeKG's reversed rows,
-  normalizes hierarchy relations to child → parent and flags them ``directed``,
+  orients hierarchy relations by PrimeKG's file order (child → parent for single
+  ontology terms; at a grouped disease, by one member pair, so possibly parent →
+  child by the group's name) and flags them ``directed``,
   assigns entity IDs (standard CURIEs such as ``MONDO:0007739``, ``group:<slug>`` for
   merged disease nodes) and relation labels, numbers the edges, and
   records a ``build_id``.
