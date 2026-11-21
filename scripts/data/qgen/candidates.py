@@ -305,7 +305,7 @@ def gen_list(g: Graph, tpl: qt.Template) -> Iterable[Cand]:
     rel = list_relation(key)
     for s in sorted(g.seed_group):
         edges = list_edges(g, s, key)
-        render = lambda m, key=key, s=s: qt.list_text(key, m(s))
+        render = lambda m, key=key, s=s: qt.list_text(key, m(s))  # noqa: E731 -- generator code, left as a lambda
         reqs = [qc.Complete(s, rel)]
         if tpl.answerable == "yes":
             if not 1 <= len(edges) <= K_LIST:
@@ -334,7 +334,7 @@ def gen_list2(g: Graph, tpl: qt.Template) -> Iterable[Cand]:
                     continue
                 e1, e2 = list_edges(g, s, k1), list_edges(g, s, k2)
                 r1, r2 = list_relation(k1), list_relation(k2)
-                render = lambda m, k1=k1, k2=k2, s=s: qt.list2_text(k1, k2, m(s))
+                render = lambda m, k1=k1, k2=k2, s=s: qt.list2_text(k1, k2, m(s))  # noqa: E731 -- generator code, left as a lambda
                 reqs = [qc.Complete(s, r1), qc.Complete(s, r2)]
                 if tpl.answerable == "yes":
                     if not (e1 and e2) or len(e1) > K_LIST or len(e2) > K_LIST or len(e1) + len(e2) > K_LIST2:
@@ -351,7 +351,7 @@ def gen_list2(g: Graph, tpl: qt.Template) -> Iterable[Cand]:
                         continue
                     if not any(list_edges(g, x, ke) for x in g.siblings(s)):
                         continue
-                    desc = lambda m, ke=ke, s=s: qt.LIST_CLAUSE[ke][0].format(s=m(s)) + ": the graph records none"
+                    desc = lambda m, ke=ke, s=s: qt.LIST_CLAUSE[ke][0].format(s=m(s)) + ": the graph records none"  # noqa: E731 -- generator code, left as a lambda
                     c = Cand(tpl, (s, k1, k2), g.seed_group[s], (s,), render, gold_edges=list(full),
                              answer_ids=tuple(other(e, s) for e in full), gap_specs=[(desc, None)])
                     c.need_zero_degree.append((s, list_relation(ke)))
@@ -443,7 +443,7 @@ def gen_rel(g: Graph, tpl: qt.Template, cap: int) -> Iterable[Cand]:
                                if g.entity(other(e, s)).type == ptype and other(e, s) != s})
             for p in partners:
                 edges = [e for e in g.between(s, p) if e.relation in rels]
-                render = lambda m, s=s, p=p: qt.rel_text(m(s), m(p))
+                render = lambda m, s=s, p=p: qt.rel_text(m(s), m(p))  # noqa: E731 -- generator code, left as a lambda
                 reqs: list = [qc.Show(e.id, e.subject.id, e.object.id, e.relation) for e in edges]
                 have = {e.relation for e in edges}
                 reqs += [qc.RuleOut(s, r, p) for r in rels if r not in have]
@@ -456,7 +456,7 @@ def gen_rel(g: Graph, tpl: qt.Template, cap: int) -> Iterable[Cand]:
                 for p, _ in near_miss_partners(g, s, r, ptype):
                     pool[p] = None
             for p in sorted(pool)[:cap]:
-                render = lambda m, s=s, p=p: qt.rel_text(m(s), m(p))
+                render = lambda m, s=s, p=p: qt.rel_text(m(s), m(p))  # noqa: E731 -- generator code, left as a lambda
                 c = Cand(tpl, (s, p), g.seed_group[s], (s, p), render)
                 c.need_absent_pairs.append((s, p))
                 c.route_options = [([qc.RuleOut(s, r, p) for r in rels], None)]
@@ -574,7 +574,7 @@ def bridge_routes(g: Graph, prober: qc.Prober, b: qt.Bridge, x: str, y: str,
 def gen_bridge(g: Graph, prober: qc.Prober, tpl: qt.Template, cap: int) -> Iterable[Cand]:
     b = next(br for br in qt.BRIDGES if br.key == tpl.relation_key)
     seeds = sorted(g.seed_group)
-    render_for = lambda x, y: (lambda m: qt.bridge_text(b, m(x, (b.key, "x")), m(y, (b.key, "y"))))
+    render_for = lambda x, y: (lambda m: qt.bridge_text(b, m(x, (b.key, "x")), m(y, (b.key, "y"))))  # noqa: E731 -- generator code, left as a lambda
     if tpl.answerable == "yes":
         for x, y in sorted(bridge_pairs(g, b, seeds)):
             M = bridge_M(g, b, x, y)
