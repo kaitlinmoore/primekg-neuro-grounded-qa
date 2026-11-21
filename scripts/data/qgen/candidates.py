@@ -6,8 +6,11 @@ then runs every validity check on every candidate, in this order, and drops a
 candidate at the first failure (stage names as in the funnel):
 
 1. ``domain``: the domain filters (:class:`Filters`): no phenotype from HPO's
-   mode-of-inheritance or clinical-modifier subtrees anywhere in the item, and no
-   reversed-subtype premise on an edge that touches a grouped (``group:``) node;
+   mode-of-inheritance or clinical-modifier subtrees anywhere in the item, no
+   reversed-subtype premise on an edge that touches a grouped (``group:``) node,
+   and no hierarchy edge with a grouped end in the item (the grouped-end rule,
+   :func:`grouped_hierarchy`: not in gold, premise or gaps, and not on the edges a
+   template reads child/parent roles from; :func:`grouped_hierarchy_problem`);
 2. ``no_fallback``: no ``primekg:`` fallback entity;
 3. ``names``: every named entity passes the name rule (``checks.resolve_mention``,
    by default the type-qualified rule with every mention typed); the question text
@@ -38,7 +41,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 
 import qgen_templates as qt
@@ -49,6 +52,7 @@ from neuro_grounded_qa.contracts import (
     PremiseTriple,
     QuestionItem,
 )
+from neuro_grounded_qa.data.build import HIERARCHY_CHILD_END
 from neuro_grounded_qa.tools import KGToolset, KGToolsetConfig
 from pydantic import ValidationError
 
@@ -66,6 +70,11 @@ NEAR_MISS_CAP = 300
 
 GROUP_PREFIX = "group:"
 """ID prefix of grouped MONDO nodes (``build.GROUP_PREFIX`` + ``:``)."""
+
+HIERARCHY_RELATIONS = frozenset(HIERARCHY_CHILD_END)
+"""The store's hierarchy relations (stored ``directed``, child first by PrimeKG's file
+order; ``build.HIERARCHY_CHILD_END``). Only ``disease_disease`` and
+``phenotype_phenotype`` occur in the store, and grouped nodes are diseases."""
 
 HPO_EXCLUDED_ROOTS = ("5", "12823")
 """HPO's "Mode of inheritance" (``HP:0000005``) and "Clinical modifier"
@@ -88,6 +97,12 @@ class Filters:
       is named, answered, cited or used in a premise or gap.
     - ``reversed_premise_skip_grouped``: ``fp_reversed`` premises only on subtype
       edges whose two ends are plain MONDO terms, not grouped nodes.
+    - ``grouped_hierarchy_out``: the grouped-end rule (generator 1.2.0, adopted
+      2026-11-21; :func:`grouped_hierarchy_problem`). No gold point, premise or gap
+      on a hierarchy edge with a grouped end, and no template reads a child/parent
+      role at an entity that has one. It covers what
+      ``reversed_premise_skip_grouped`` does and more; that filter stays, checked
+      first, so the funnel's earlier counts keep their meaning.
     - ``naming``: the name rule and mention form, one of ``checks.NAMING_MODES``
       (default ``typed_all``: every mention names the type; revision 2).
     - ``lowercase_phenotypes``: write phenotype names in lowercase in question text
@@ -96,21 +111,28 @@ class Filters:
     :meth:`none` is the design stage (no filters, strict names), which reproduces
     the design-stage feasibility counts. :meth:`revision1` is the first generated
     set's rules (filters on, typed only when a name is shared, names as stored).
+    :meth:`revision2` is generator 1.1.0's rules (the default before the grouped-end
+    rule). The defaults are the current rules.
     """
 
     hpo_excluded_roots: tuple[str, ...] = HPO_EXCLUDED_ROOTS
     reversed_premise_skip_grouped: bool = True
+    grouped_hierarchy_out: bool = True
     naming: str = "typed_all"
     lowercase_phenotypes: bool = True
 
     @classmethod
     def none(cls) -> Filters:
-        return cls(hpo_excluded_roots=(), reversed_premise_skip_grouped=False, naming="strict",
-                   lowercase_phenotypes=False)
+        return cls(hpo_excluded_roots=(), reversed_premise_skip_grouped=False, grouped_hierarchy_out=False,
+                   naming="strict", lowercase_phenotypes=False)
 
     @classmethod
     def revision1(cls) -> Filters:
-        return cls(naming="typed_when_shared", lowercase_phenotypes=False)
+        return cls(grouped_hierarchy_out=False, naming="typed_when_shared", lowercase_phenotypes=False)
+
+    @classmethod
+    def revision2(cls) -> Filters:
+        return cls(grouped_hierarchy_out=False)
 
     def as_json(self) -> dict:
         return {k: list(v) if isinstance(v, tuple) else v for k, v in asdict(self).items()}
@@ -255,6 +277,89 @@ def list_edges(g: Graph, s: str, key: str) -> list[EdgeEvidence]:
 
 def list_relation(key: str) -> str:
     return key.split(":")[0]
+
+
+# ---- the grouped-end rule (option G) --------------------------------------------------
+
+
+def grouped_hierarchy(subject_id: str, relation: str, object_id: str) -> bool:
+    """True for a hierarchy fact with a PrimeKG grouped disease (``group:``) at either
+    end: **the** grouped-end rule's predicate. Everything that applies the rule calls
+    this, and only this, to decide whether a fact is affected.
+
+    Why: the store orients a hierarchy edge by the first of its two rows in PrimeKG's
+    file order. For a grouped node, that row comes from one member pair, and PrimeKG
+    doesn't record which, so at the level of the entity the model sees the stored
+    child → parent order can read backwards by the group's name (``E:014579``,
+    Alzheimer disease → familial Alzheimer disease), and three such edges form a
+    cycle. Items therefore never rest on one. The store keeps the edges as they are.
+    See "Grouped entities and edge direction" in ``docs/question_set_design.md``.
+    """
+    return relation in HIERARCHY_RELATIONS and (
+        subject_id.startswith(GROUP_PREFIX) or object_id.startswith(GROUP_PREFIX))
+
+
+_BRIDGE_BY_KEY = {b.key: b for b in qt.BRIDGES}
+
+
+def role_reads(tpl: qt.Template, params: Sequence[str]) -> list[tuple[str, str]]:
+    """``(entity, hierarchy relation)`` pairs at which a template picks answers by a
+    child/parent role: every edge of that relation at that entity has its stored
+    direction read, whether it ends up in the answer or is left out by its role.
+
+    - child/parent list clauses (``disease_disease:children``/``:parents``, in
+      ``sh_list``/``un_list`` and in either clause of ``sh_list2``/``pa_list2``): the
+      seed, ``params[0]``;
+    - role bridges (``subtype_assoc``, ``phenotype_kind``): the named end whose
+      intermediates have a fixed role (``Bridge.m_role_x``/``m_role_y``).
+
+    ``fp_reversed`` reads only its own gold edge's direction, which the gold part of
+    the rule covers.
+    """
+    if tpl.shape == "bridge":
+        b = _BRIDGE_BY_KEY[tpl.relation_key]
+        out = []
+        if b.m_role_x and b.r_x in HIERARCHY_RELATIONS:
+            out.append((params[0], b.r_x))
+        if b.m_role_y and b.r_y in HIERARCHY_RELATIONS:
+            out.append((params[1], b.r_y))
+        return out
+    if tpl.shape == "list":
+        keys = [tpl.relation_key]
+    elif tpl.shape == "list2":
+        keys = list(params[1:])
+    else:
+        return []
+    return [(params[0], list_relation(k)) for k in keys
+            if ":" in k and list_relation(k) in HIERARCHY_RELATIONS]
+
+
+Triple = tuple[str, str, str]
+"""``(subject_id, relation, object_id)``."""
+
+
+def grouped_hierarchy_problem(tpl: qt.Template, params: Sequence[str], gold: Iterable[Triple],
+                              premise_and_gaps: Iterable[Triple],
+                              edges_at: Callable[[str, str], Iterable[EdgeEvidence]]) -> str | None:
+    """Where an item breaks the grouped-end rule, or None. Shared by the generator's
+    ``domain`` stage (:func:`domain_problem`) and the item check (``qgen.verify``).
+
+    - ``grouped_hierarchy_gold``: a gold point is a grouped-end hierarchy edge;
+    - ``grouped_hierarchy_premise_or_gap``: the premise or a gap triple is one;
+    - ``grouped_hierarchy_role``: the template reads roles (:func:`role_reads`) at an
+      entity with a grouped-end edge of that relation, so its answer set (or the
+      emptiness of a clause) depends on such an edge's stored direction.
+
+    ``edges_at(entity, relation)`` lists the store's edges at an entity.
+    """
+    if any(grouped_hierarchy(*t) for t in gold):
+        return "grouped_hierarchy_gold"
+    if any(grouped_hierarchy(*t) for t in premise_and_gaps):
+        return "grouped_hierarchy_premise_or_gap"
+    for ent, rel in role_reads(tpl, params):
+        if any(grouped_hierarchy(e.subject.id, e.relation, e.object.id) for e in edges_at(ent, rel)):
+            return "grouped_hierarchy_role"
+    return None
 
 
 def gp_from(edges: Iterable[EdgeEvidence]) -> list[GoldPoint]:
@@ -635,14 +740,21 @@ def generate(g: Graph, prober: qc.Prober, cap: int = NEAR_MISS_CAP) -> list[Cand
 # --------------------------------------------------------------------------------------
 
 
-def domain_problem(c: Cand, excluded: set[str], filters: Filters) -> str | None:
-    """The domain filter a candidate fails, or None."""
+def domain_problem(c: Cand, excluded: set[str], filters: Filters, g: Graph) -> str | None:
+    """The domain filter a candidate fails, or None (checked in the order below)."""
     if excluded and c.entity_ids & excluded:
         return "hpo_excluded_subtree"
     p = c.premise
     if filters.reversed_premise_skip_grouped and c.tpl.id.startswith("fp_reversed.") and p is not None \
             and (p.subject_id.startswith(GROUP_PREFIX) or p.object_id.startswith(GROUP_PREFIX)):
         return "reversed_premise_grouped_node"
+    if filters.grouped_hierarchy_out:
+        return grouped_hierarchy_problem(
+            c.tpl, c.params,
+            [(e.subject.id, e.relation, e.object.id) for e in c.gold_edges],
+            [(t.subject_id, t.relation, t.object_id) for t in ([p] if p else []) + c.gap_triples],
+            g.edges_of,
+        )
     return None
 
 
@@ -754,7 +866,7 @@ def build_pool(store, edge_ids: list[str], seeds: list[dict], fg: qc.FullGraph, 
     seen_text: set[str] = set()
     for c in cands:
         f = funnel[c.tpl.id]
-        if why := domain_problem(c, excluded, filters):
+        if why := domain_problem(c, excluded, filters, g):
             domain_fail[c.tpl.id][why] += 1
             continue
         f["domain"] += 1

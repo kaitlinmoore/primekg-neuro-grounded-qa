@@ -138,9 +138,14 @@ stored order only if the edge is flagged `directed`.
 - Undirected edges match in either order: `DIS_1 associated_with GENE_A` is supported
   by an edge stored as `GENE_A associated_with DIS_1`. This holds for relations whose
   roles are fixed by entity types too (`targets`, `indicated_for`; see "Limitations").
-- Directed edges (`directed: true`, same-type hierarchy relations, stored child →
-  parent) match in order only: `DIS_G subtype_of DIS_3` is not supported by the edge
-  `DIS_3 subtype_of DIS_G`.
+- Directed edges (`directed: true`, same-type hierarchy relations) match in order
+  only: `DIS_G subtype_of DIS_3` is not supported by the edge `DIS_3 subtype_of
+  DIS_G`. The store orients them by PrimeKG's file order: child → parent for a pair of
+  single ontology terms (checked against OptimusKG wherever it has the pair; none
+  reversed). An edge with a PrimeKG grouped disease at either end takes its order from
+  one member pair, so by the group's name it can read parent → child, and three such
+  edges form a cycle. The reward still accepts only the stored order. See "Grouped
+  entities and edge direction" in `docs/question_set_design.md`.
 - Relation labels match exactly: no case folding, synonym or inverse-label matching.
 - Names (`subject_name`, `object_name`) are never compared.
 - Extra non-supporting cites alongside a supporting one cost nothing in the score; they
@@ -438,6 +443,11 @@ rewards into `trace.reward`; and skipping scoring for format-violation traces.
   targets DIS_1". The reversed reading is nonsense rather than a different true fact,
   but the reward doesn't penalize it (settled 2026-11-19: PrimeKG's stored order is
   arbitrary for these).
+- **Hierarchy edges at grouped diseases keep a member pair's order.** An edge with a
+  PrimeKG grouped disease at either end is directed in the order of one member pair,
+  which can read parent → child by the group's name (three such edges form a cycle),
+  and the reward accepts only that order. Generator 1.2.0 keeps items off these edges,
+  but a model can still retrieve and cite them.
 - **Direction for claim-vs-claim comparison comes from what the score sees.** If a
   directed relation appears in no retrieved edge, gold point, premise or graph gap
   triple, deduplication treats it as undirected. Such claims are unsupported anyway (no retrieved edge states

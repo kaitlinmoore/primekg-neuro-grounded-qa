@@ -2517,9 +2517,10 @@ same 45,521 edges and 11,789 nodes, none only in one, and the same degree cap.
 - **Deduplication.** PrimeKG writes every fact twice (`x→y`, then later `y→x`).
   The store keeps one edge per (label, unordered pair): 8,100,498 raw rows become
   4,050,249 facts, and every pair has exactly two rows, each the other's reverse.
-- **Hierarchy relations** are stored subject = child (narrower), object = parent
-  (broader), with `directed` true, so claims match them in that order only. The
-  orientation comes from each pair's first row in file order: parent → child for
+- **Hierarchy relations** are stored with `directed` true, so claims match them in
+  the stored order only. The orientation comes from each pair's first row in file
+  order, which gives subject = child (narrower), object = parent (broader) for a pair
+  of single ontology terms, but not always at a grouped disease (below): parent → child for
   `disease_disease`, `phenotype_phenotype`, `bioprocess_bioprocess`,
   `molfunc_molfunc`, `cellcomp_cellcomp` and `pathway_pathway`; child → parent for
   `anatomy_anatomy` (see "Directed-relation inventory"). In this store only
@@ -2530,9 +2531,12 @@ same 45,521 edges and 11,789 nodes, none only in one, and the same degree cap.
     edge either way; `phenotype_phenotype` 912 such edges, 790 agree, 0 reversed,
     122 with no OptimusKG edge.
   - Edges with a grouped disease at either end (216 `disease_disease` edges) were not
-    checked here. Some of them read broader → narrower by the group's name, and three
-    form a cycle: see "Grouped entities and edge direction" (2026-11-21; measured,
-    options proposed, nothing adopted).
+    checked here. Such an edge takes its order from one member pair, so some read
+    broader → narrower by the group's name, and three form a cycle: see "Grouped
+    entities and edge direction". Option G was adopted on 2026-11-21: the store keeps
+    these edges as built (still `directed`, the cycle included), and generator 1.2.0
+    keeps them out of items. `check_store.py` reports the cycle as a listed exception
+    and fails on any other.
 - **`exposure_exposure`** (643 edges, none single-hop) stays undirected: it holds
   CTD stressor/marker links, not a hierarchy (open question).
 - **Every other edge** is undirected. Its subject is, for readability, the end
@@ -3766,9 +3770,11 @@ with `--env.taskset.allow_heldout true`, and refuses items from another store bu
 
 ## Grouped entities and edge direction
 
-**Status: design record, 2026-11-21. Measurements, options and a recommendation;
-proposed, not adopted.** No store, item, generator, reward, prompt or tool code
-changed. Held-out items were not read; their impact is specified below as a
+**Status: option G adopted by Kaitlin on 2026-11-21, with option D's disclosure;
+implemented in generator 1.2.0, and the item set regenerated the same day ("Adopted:
+option G" below). F-label stays open until before the freeze.** The sections from "Method" to "Not measured" are the design
+record as written on 2026-11-21 (measurements, options, recommendation), before the
+decision. Held-out items were not read; their impact is specified below as a
 counts-only check to run.
 
 **The problem.** The store flags `disease_disease` and `phenotype_phenotype` edges
@@ -3848,9 +3854,11 @@ the same rule. Cycles: every elementary directed cycle over all 1,494 directed e
   | `E:014667` | `group:juvenile_amyotrophic_lateral_sclerosis` juvenile amyotrophic lateral sclerosis → `MONDO:0005144` familial amyotrophic lateral sclerosis | unknown | unknown | yes | 2/1 (1/1) |
   | `E:014692` | `group:neurodegeneration_with_brain_iron_accumulation` neurodegeneration with brain iron accumulation → `MONDO:0017998` PLA2G6-associated neurodegeneration | reversed | reversed | | 8/1 (2/0) |
 
-- **Edges that read backwards by name but that the rule can't decide.** Four more
+- **Edges that read backwards by name but that the rule can't decide.** Five more
   edges read broader → narrower by their names, and OptimusKG has no member pair to
-  confirm or reject them: `E:014582` amyotrophic lateral sclerosis → frontotemporal
+  confirm or reject them: `E:014712` Parkinson disease → hereditary late onset
+  Parkinson disease (`unknown`: OptimusKG lacks the object term; added after the
+  decision), `E:014582` amyotrophic lateral sclerosis → frontotemporal
   dementia with motor neuron disease (`no_ancestry`), and, from
   `group:frontotemporal_dementia_and_or_amyotrophic_lateral_sclerosis`, `E:014638` to
   familial amyotrophic lateral sclerosis (`unknown`), `E:014639` to behavioral
@@ -4110,6 +4118,93 @@ Under F-label, the last three sentences become: "Edges with a grouped disease at
 end carry the undirected label `disease_disease/grouped` and match in either order,
 because PrimeKG doesn't record a group-level parent–child order." A matching
 Limitations bullet would say the same in one sentence.
+
+### Adopted: option G (generator 1.2.0)
+
+Kaitlin's decisions of 2026-11-21:
+
+1. **G now, with D's disclosure.** The store, `build_id`, `E:` IDs and split rule
+   don't change. `docs/reward_spec.md` states how the store orients grouped-end
+   edges, and that the reward accepts only the stored order (section 3 and
+   "Limitations").
+2. **F-label** (a derived undirected label in the store, with a pinned split
+   namespace) **stays open until before the freeze.**
+3. **No MONDO fetch.** The union of members' undirected edges at grouped nodes is a
+   limitation, not measured (below).
+4. **`check_store.py`** gains a directed-cycle check and a grouped-edge report.
+
+**The rule in code** (`scripts/data/qgen/candidates.py`). One predicate,
+`grouped_hierarchy(subject, relation, object)`: a hierarchy relation
+(`build.HIERARCHY_CHILD_END`) with a `group:` entity at either end.
+`grouped_hierarchy_problem` applies it at the `domain` stage, under the filter
+`grouped_hierarchy_out` (recorded in the manifest), and drops a candidate when:
+
+- a gold point is such an edge (`grouped_hierarchy_gold`);
+- its premise or a gap triple is such a fact (`grouped_hierarchy_premise_or_gap`);
+- its template reads a child/parent role at an entity that has such an edge of that
+  relation (`grouped_hierarchy_role`). Role reads: the seed of a
+  `disease_disease:children`/`:parents` list clause (`sh_list`, `un_list`, either
+  clause of `sh_list2` and `pa_list2`), and the role end of a role bridge (`x` of
+  `subtype_assoc`, `y` of `phenotype_kind`). Such a template reads the stored
+  direction of every edge there, whether the edge ends up in the answer or is left
+  out by its role.
+
+`fp_reversed` reads only its own gold edge's direction, which the gold clause covers,
+so `q-3a579fbf59ba` (plain gold edge `E:014250`), counted conservatively in the
+option table, isn't affected. The item check (`question_set.py check`) applies the
+same function to written items when the manifest records the filter. The rule lives
+in the generator, not the template catalog, so `template_catalog_sha256` doesn't
+change.
+
+**On the current pool** (counts only, both splits): 81,844 candidates; 49,003 valid
+under generator 1.1.0's rules, 46,929 under 1.2.0's. The rule drops 3,898 candidates
+at the `domain` stage: 1,059 on gold (`mh_bridge.subtype_assoc` 699, `pa_list2` 152,
+`sh_evid.disease_disease` 75, `sh_rel.disease` 75, `sh_list2` 30,
+`sh_list.disease_disease:parents` 18, `:children` 10), 108 on premises
+(`fp_evid.disease_disease`) and 2,731 on role reads (`un_bridge.subtype_assoc` 2,557,
+`mh_bridge.subtype_assoc` 117, `pa_list2` 38, `un_list.disease_disease:children` 10,
+`sh_list2` 4, `sh_list.disease_disease:parents` 3, `:children` 2).
+
+**Train items the rule removes** (7): gold on a grouped-end edge, `q-10db1870a105`,
+`q-bbc500b5a29c` and `q-e0684739c55c` (`pa_list2`), `q-3d9f124db8e3` and
+`q-95d8d5574edf` (`mh_bridge.subtype_assoc`); role reads, `q-366b0cf33e2c` and
+`q-c77cd2d1262d` (`un_bridge.subtype_assoc`). Both reopened items leave through the
+rule.
+
+**Regeneration: pending a decision.** A dry run (in memory; train compared, held-out
+counts only) selects 189 of the current 200 train items again, each identical apart
+from the generator version in its notes. Besides the 7 above, it also replaces 4 train
+items the rule doesn't touch (`q-016f62d35cfe`, `q-22f8c2d773dc`, `q-cca60c56b714`,
+`q-f7fb9df8db59`). The cause is the held-out-first selection: 6 of the 100 held-out
+items change, and train selection excludes held-out items' facts and named-entity
+sets. With the held-out selection's facts held at generator 1.1.0's, 3 of the 4 come
+back; with only the scarcity order held, none do.
+
+**Outcome (2026-11-21).** Kaitlin accepted the cascade: selection stays a pure
+function of the pool, with no carry-over of earlier items. The set was regenerated
+with generator 1.2.0 (same targets, quotas, split seed and filters, no
+`--allow-shortfall`), and the result matched the dry run item for item:
+
+- 189 train items kept, each identical apart from `notes.generator`.
+- 11 train items replaced. **7 by the rule** (listed above). **4 by the cascade**:
+  `q-016f62d35cfe` (`sh_rel.gene/protein`), `q-22f8c2d773dc` and `q-cca60c56b714`
+  (`pa_evid2.disease_protein`) and `q-f7fb9df8db59` (`mh_bridge.drug_target_assoc`).
+  The rule doesn't touch these 4. They left because held-out selection changed 6 items,
+  and train excludes held-out facts and named-entity sets.
+- 11 added: `q-0b14365af238` (`mh_bridge.shared_protein`), `q-0dc1ca8172b5`,
+  `q-3e5616072835` and `q-6a35d55e2332` (`pa_list2`), `q-5ba1ae30775b`
+  (`un_bridge.drug_target_assoc`), `q-71b966615191` (`mh_bridge.shared_phenotype`),
+  `q-8a7f1f8a738f` (`mh_bridge.pathway_assoc`), `q-92571d0eb9c3`
+  (`un_bridge.phenotype_kind`), `q-adb4e066cb0a` and `q-e012dc4e1dfc`
+  (`pa_evid2.disease_protein`), `q-d9722ed0e269` (`sh_evid2.disease_protein`).
+- Held-out (counts only): 6 of 100 items replaced.
+- Type and disease counts are unchanged in both splits. `mh_bridge.subtype_assoc` no
+  longer has a train item (2 before): 25 valid candidates remain in the pool, against
+  496.
+- New hashes: `train.jsonl` `a39776ad3ffe…`, `heldout.jsonl` `a501dbdf7d9a…`,
+  `manifest.json` `9630cdca765d…`. The generator 1.1.0 set (`train.jsonl`
+  `caf0480d…`), which train runs 1 and 2 used, is archived unread under
+  `$NGQ_DATA_DIR/items-archive/generator-1.1.0/primekg-2.1-6d869fa6bb10/`.
 
 ### Not measured
 

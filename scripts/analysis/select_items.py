@@ -33,6 +33,14 @@ it is still recorded). Together they select, for example, every ``no`` item:
         --items-dir "$NGQ_DATA_DIR/items/<build_id>" --answerable no --all \\
         --out outputs/<run>/no-items
 
+With ``--ids ID1 ID2 ...`` it keeps only the named item IDs, before any other filter;
+an ID with no train item is an error. With ``--all`` that selects exactly those items,
+for example the train items a regeneration replaced:
+
+    uv run python scripts/analysis/select_items.py \\
+        --items-dir "$NGQ_DATA_DIR/items/<build_id>" --ids q-0b14365af238 q-0dc1ca8172b5 --all \\
+        --out outputs/<run>/items
+
 Writes, under ``--out``:
 
 - ``items.jsonl``: the chosen items, one JSON object per line, exactly as they
@@ -92,6 +100,7 @@ def select(
     templates: list[str] | None = None,
     answerable: list[str] | None = None,
     take_all: bool = False,
+    ids: list[str] | None = None,
 ) -> dict:
     """Select, write ``items.jsonl`` and ``selection.json``, and return the selection.
 
@@ -103,12 +112,19 @@ def select(
         templates: if given, keep only these template IDs and stratify by template.
         answerable: if given, keep only items with one of these answerability labels.
         take_all: take every item that passes the filters; ``per_type`` is ignored.
+        ids: if given, keep only these item IDs (applied before the other filters).
 
     Raises:
-        ValueError: a named template or answerability label has no train items.
+        ValueError: a named item ID, template or answerability label has no train items.
     """
     train_file = items_dir / "train.jsonl"
     items = load_train(items_dir)  # refuses anything that isn't train
+    if ids:
+        wanted_ids = set(ids)
+        missing_ids = sorted(wanted_ids - {item.id for item in items})
+        if missing_ids:
+            raise ValueError(f"no train items with id(s): {', '.join(missing_ids)}")
+        items = [item for item in items if item.id in wanted_ids]
     if answerable:
         wanted_labels = set(answerable)
         missing_labels = sorted(wanted_labels - {item.answerable for item in items})
@@ -148,6 +164,7 @@ def select(
         "per_type": None if take_all else per_type,
         "take_all": take_all,
         "answerable": sorted(answerable) if answerable else None,
+        "ids": sorted(set(ids)) if ids else None,
         "stratify_by": "template_id" if templates else "qtype",
         "available": {k: len(v) for k, v in sorted(by_type.items())},
         "source": str(train_file),
@@ -172,11 +189,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep only these template IDs and draw --per-type from each")
     ap.add_argument("--answerable", nargs="+", default=None, metavar="LABEL",
                     help="keep only items with these answerability labels (yes, no, partial, correctable)")
+    ap.add_argument("--ids", nargs="+", default=None, metavar="ITEM_ID",
+                    help="keep only these item IDs (with --all: exactly these items)")
     ap.add_argument("--all", dest="take_all", action="store_true",
                     help="take every item that passes the filters instead of drawing --per-type")
     args = ap.parse_args(argv)
     sel = select(args.items_dir, args.per_type, args.seed, args.out, args.templates,
-                 args.answerable, args.take_all)
+                 args.answerable, args.take_all, args.ids)
     for group, rows in sel["chosen"].items():
         if not args.take_all and len(rows) < args.per_type:
             print(f"{group}: only {len(rows)} train item(s), taking all")

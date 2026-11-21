@@ -26,6 +26,6 @@ scripts there, and ``tests/data/conftest.py``, arrange that).
 See "Question generation design" in ``docs/question_set_design.md``.
 """
 
-GENERATOR_VERSION = "1.1.0"
+GENERATOR_VERSION = "1.2.0"
 """Recorded in every item's notes and in the manifest. Bump it when a change to this
 module or the template catalog changes which items are generated or what they say."""

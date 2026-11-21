@@ -17,6 +17,12 @@ three ways:
    undirected. As a second, independent reading, directed ``disease_disease`` and
    ``phenotype_phenotype`` edges are compared with OptimusKG's ``PARENT`` edges
    between the same MONDO / HPO terms (OptimusKG stores parent -> child).
+   Directed edges form no cycle (:func:`check_cycles`), apart from the known,
+   disclosed exceptions in :data:`KNOWN_DIRECTED_CYCLES`; any other cycle fails.
+   A report (no pass/fail) counts directed edges with a grouped (``group:``) end by
+   relation and by their class against OptimusKG (:func:`grouped_edge_report`, the
+   classification of ``measure_group_direction.py``): the file-order rule orients
+   those edges by one member pair, so they can read backwards at group level.
 3. **Measurement agreement.** The store's (relation, node pair) set equals the
    subgraph that ``scripts/data/subgraph.py`` builds for the same seed and
    definition on ``derived/primekg.duckdb``, the code that produced the expansion
@@ -35,12 +41,14 @@ import csv
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import measure_group_direction as mgd  # noqa: E402
 import subgraph as sg  # noqa: E402
 from paths import derived_dir, raw_dir  # noqa: E402
 
@@ -74,6 +82,81 @@ def group_ok(eid: str, name: str) -> bool:
     """Whether ``eid`` is ``group:<slug of name>``, optionally with a ``_<n>`` suffix."""
     slug = "_".join(w for w in re.split(r"[^a-z0-9]", name.lower()) if w)
     return eid == f"group:{slug}" or re.fullmatch(rf"group:{re.escape(slug)}_[0-9]+", eid) is not None
+
+
+KNOWN_DIRECTED_CYCLES: dict[frozenset[str], str] = {
+    frozenset({"E:014202", "E:014583", "E:014667"}): (
+        "MONDO:0005144 familial amyotrophic lateral sclerosis -> group:amyotrophic_lateral_sclerosis "
+        "-> group:juvenile_amyotrophic_lateral_sclerosis -> MONDO:0005144 (build primekg-2.1-6d869fa6bb10)"
+    ),
+}
+"""Directed cycles the store is known to hold, by the edge IDs on them, each disclosed
+in ``docs/question_set_design.md``, "Grouped entities and edge direction". The one
+cycle runs through two grouped diseases, whose edges take their order from one member
+pair each; the store keeps it as built (generator 1.2.0 keeps grouped-end hierarchy
+edges out of items instead). :func:`check_cycles` reports these and fails on any
+other cycle. Edge IDs are per build: a rebuilt store that renumbers these edges
+fails until this table is updated."""
+
+
+def directed_cycles(edges: Iterable[Mapping]) -> list[list[str]]:
+    """Every elementary cycle over the directed edges, each as its sorted edge IDs.
+    A directed self-loop is a cycle of one edge."""
+    arcs: dict[tuple[str, str], list[str]] = defaultdict(list)
+    loops = []
+    for e in edges:
+        if not e["directed"]:
+            continue
+        if e["subject"] == e["object"]:
+            loops.append([e["id"]])
+        arcs[(e["subject"], e["object"])].append(e["id"])
+    out = [sorted(i for k in range(len(c)) for i in arcs[(c[k], c[(k + 1) % len(c)])])
+           for c in mgd.simple_cycles(arcs)]
+    return sorted(loops + out)
+
+
+def check_cycles(edges: list[Mapping],
+                 known: Mapping[frozenset[str], str] = KNOWN_DIRECTED_CYCLES) -> dict:
+    """Directed cycles, split into known exceptions and new ones. ``new_cycles``
+    non-empty fails the store check; a known exception no longer found is reported."""
+    found = directed_cycles(edges)
+    known_found = [c for c in found if frozenset(c) in known]
+    return {
+        "directed_edges": sum(1 for e in edges if e["directed"]),
+        "cycles": len(found),
+        "known_exceptions": [{"edges": c, "note": known[frozenset(c)]} for c in known_found],
+        "known_exceptions_not_found": [sorted(k) for k in known if list(sorted(k)) not in found],
+        "new_cycles": [c for c in found if frozenset(c) not in known],
+    }
+
+
+def grouped_edge_report(edges: list[Mapping], entity_sources: list[Mapping], reference_db: Path) -> dict:
+    """Directed edges with a grouped end: counts by relation, and by relation and class
+    against OptimusKG's ``PARENT`` hierarchy (``measure_group_direction.classify``;
+    plain edges are counted too, for comparison). A report, not a check."""
+    directed = [e for e in edges if e["directed"]]
+    grouped = lambda e: e["subject"].startswith(mgd.GROUP_PREFIX) or e["object"].startswith(mgd.GROUP_PREFIX)  # noqa: E731
+    out: dict = {
+        "directed_edges": len(directed),
+        "with_grouped_end_by_relation": dict(sorted(Counter(e["relation"] for e in directed if grouped(e)).items())),
+    }
+    if not reference_db.exists():
+        out["classes"] = {"skipped": f"{reference_db} not found"}
+        return out
+    srcs = {x["id"]: x for x in entity_sources}
+    ref = mgd.load_reference(reference_db)
+    anc = {orel: mgd.ancestor_fn(parents) for orel, (parents, _known) in ref.items()}
+    counts: Counter = Counter()
+    for e in directed:
+        orel = mgd.HIERARCHY_RELATIONS.get(e["relation"])
+        if orel is None:
+            cls = "no_reference"
+        else:
+            cls = mgd.classify(mgd.member_refs(e["subject"], srcs), mgd.member_refs(e["object"], srcs),
+                               anc[orel], ref[orel][1])
+        counts[(e["relation"], "grouped" if grouped(e) else "plain", cls)] += 1
+    out["classes"] = {f"{r}|{g}|{c}": n for (r, g, c), n in sorted(counts.items())}
+    return out
 
 
 def load_store_files(store: Path) -> dict:
@@ -285,12 +368,16 @@ def main() -> None:
         "build_id": s["meta"]["build_id"],
         "raw": check_raw(s, kg),
         "optimuskg_direction": check_optimuskg(s),
+        "directed_cycles": check_cycles(s["edges"]),
+        "grouped_hierarchy_edges": grouped_edge_report(s["edges"], s["entity_sources"],
+                                                       derived_dir() / "optimuskg.duckdb"),
         "measurement": check_measurement(s),
     }
     m = result["measurement"]
     ok = (
         not result["raw"]["failures"]
         and result["raw"]["raw_node_attribute_conflicts"] == 0
+        and not result["directed_cycles"]["new_cycles"]
         and ("skipped" in m or (m["only_in_store"] == 0 and m["only_in_measurement"] == 0
                                 and m["degree_cap_measurement"] == m["degree_cap_store"]
                                 and m["measurement_nodes"] == m["store_nodes"]))

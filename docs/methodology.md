@@ -292,3 +292,5 @@ observations, not effects.
   `answer_text` remarks that an edge runs the opposite way to what the names suggest.
 
 Run outputs, the comparison and the trace reading stay in `outputs/` (gitignored).
+
+Train runs 1 and 2 used the generator 1.1.0 item set (`train.jsonl` `caf0480d…`), which is now archived under `$NGQ_DATA_DIR/items-archive/generator-1.1.0/` after the regeneration with generator 1.2.0 (docs/question_set_design.md, "Adopted: option G").

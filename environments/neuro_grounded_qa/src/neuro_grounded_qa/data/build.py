@@ -30,8 +30,10 @@ and writes a store directory in the format of :mod:`neuro_grounded_qa.data.store
    ``NCBIGene:351``), ``group:<slug of the name>`` for PrimeKG's grouped MONDO nodes
    (:func:`group_ids`), and ``primekg:<x_index>`` for CURIEs that collide. Computed
    over the whole graph, so a node's ID doesn't depend on the seed.
-6. **Orient** each edge (:func:`orient`). Hierarchy relations become subject = child,
-   object = parent, ``directed=True``, using PrimeKG's file-order convention. Other
+6. **Orient** each edge (:func:`orient`). Hierarchy relations are flagged
+   ``directed=True`` and oriented by PrimeKG's file-order convention, which gives
+   subject = child, object = parent for a pair of single ontology terms; at a grouped
+   node it follows one member pair (see :data:`HIERARCHY_CHILD_END`). Other
    edges get a fixed, readable orientation (the relation name's first type is the
    subject; symmetric same-type relations order by ID) and stay undirected.
 7. **Number** the edges ``E:000001``… in (relation, subject ID, object ID) order
@@ -100,7 +102,16 @@ original, so the first copy keeps the source ontology's orientation: parent → 
 (child = ``y``) for all of these except ``anatomy_anatomy``, whose build cell writes
 child → parent (child = ``x``). Measured against OptimusKG's directed ontology edges
 (at least 99.97% agreement; ``docs/question_set_design.md``, "Directed-relation
-inventory"). These are stored subject = child, object = parent, ``directed=True``."""
+inventory"). The store keeps the end this rule picks as subject and flags the edge
+``directed=True``. For a pair of single ontology terms that is the child (narrower
+term), checked against OptimusKG wherever it has the pair, none reversed. A PrimeKG
+grouped disease (``group:<slug>``) merges several MONDO terms, and its pair's first row
+comes from one member pair, which ``kg.csv`` doesn't record. So an edge with a grouped
+end can read parent → child by the group's name, and three such edges form a cycle.
+The question generator keeps those edges out of items (generator 1.2.0); see
+"Grouped entities and edge direction" in ``docs/question_set_design.md``. The wording
+of ``RULES["hierarchy"]["convention"]`` is part of the ``build_id``, so it stays as
+built."""
 
 UNDIRECTED_SAME_TYPE: tuple[str, ...] = ("protein_protein", "drug_drug", "exposure_exposure")
 """Same-type relations stored undirected. ``protein_protein`` and ``drug_drug`` are

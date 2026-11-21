@@ -1429,6 +1429,98 @@ uv run python -m exploits.variants --audit-dir "$O" [--real-run NAME=RUN_DIR ...
 uv run python -m exploits.gold_completeness --items-dir "$D" --store "$S" --out "$O/gold-completeness"
 ```
 
+## Part 5: rerun after item regeneration
+
+Generator 1.2.0 keeps hierarchy edges with a grouped disease at either end out of items
+("Adopted: option G" in `docs/question_set_design.md`). The regenerated train set
+(`train.jsonl` `a39776ad…`) keeps 189 of part 4's 200 items, each identical apart from
+the generator version in its notes, and replaces 11:
+
+- **7 removed by the rule:** `q-10db1870a105`, `q-bbc500b5a29c`, `q-e0684739c55c`
+  (`pa_list2`), `q-3d9f124db8e3`, `q-95d8d5574edf` (`mh_bridge.subtype_assoc`),
+  `q-366b0cf33e2c`, `q-c77cd2d1262d` (`un_bridge.subtype_assoc`).
+- **4 removed by the cascade**, which the rule doesn't touch. Held-out selection
+  changed, and train excludes held-out facts and named-entity sets: `q-016f62d35cfe`
+  (`sh_rel.gene/protein`), `q-22f8c2d773dc`, `q-cca60c56b714`
+  (`pa_evid2.disease_protein`), `q-f7fb9df8db59` (`mh_bridge.drug_target_assoc`).
+- **11 added** (listed in the design doc's outcome).
+
+Same reward (v1.1), policies and settings as part 4, with no model called and no
+held-out item read. 35 policies × 200 train items through `scripts/run.sh` on the stub:
+7,000 rollouts. No policy errors, budget hits, rejected tool results or stripped cites;
+`rescore = recorded` on 200/200 per policy. Live v1.1 equals `prec_pen_s(μ=1, a=3)`
+on 7,000/7,000. v1 recomputed equals `prec_pen(μ=1, a=3)` on 7,000/7,000. v0
+recomputed equals the variant code's v0 on 7,000/7,000. Gold completeness: 200/200
+train items complete, 0 facts gold misses, 0 non-answers in gold (by family:
+`sh_evid2` 13 and `sh_rel` 30, against 12 and 31; the rest as in part 4).
+
+**What moved, and why.** Item by item against part 4's traces:
+
+- On the 189 kept items, every policy scores exactly as in part 4, except
+  `dump_read_wording`. That policy is learned: its out-of-fold wording model is refit on
+  the new train labels, so its predictions change on 9 kept items. Those 9 add +0.002
+  to its mean and the swapped items take off 0.0015, a net +0.0003.
+- Every other move comes from the 22 swapped items. The table shows each policy's
+  mean on the 7 rule items and the 4 cascade items (part 4's traces) and on the 11
+  added items (part 5's).
+- The largest move is `targeted`, −0.005. It abstains on one added item,
+  `q-8a7f1f8a738f` (`mh_bridge.pathway_assoc`), and scores 0 there.
+- No-gold exploits fall slightly (−0.001 to −0.002). The removed items, the rule items
+  above all, were among the easier ones to dump on: `dump_read_shape` averaged 0.44 on
+  the 7 rule items, against 0.27 on the 11 added. `dump_read_nolink` rises by 0.003.
+
+| Policy | Kind | Part 4 | Part 5 | Δ | Gap share part 4 | Gap share part 5 | Rule items (7) | Cascade items (4) | Added items (11) |
+|---|---|---|---|---|---|---|---|---|---|
+| `abstain` | question-only | 0.285 | 0.285 | 0.000 | 0.00 / 0.00 | 0.00 / 0.00 | 0.29 | 0.00 | 0.18 |
+| `dump` | question-only | 0.044 | 0.042 | −0.002 | −0.34 / −0.39 | −0.34 / −0.40 | 0.07 | 0.05 | 0.03 |
+| `dump_flag` | question-only | 0.057 | 0.055 | −0.002 | −0.32 / −0.37 | −0.32 / −0.38 | 0.16 | 0.09 | 0.09 |
+| `dump_probe` | question-only | 0.046 | 0.043 | −0.002 | −0.33 / −0.39 | −0.34 / −0.40 | 0.07 | 0.08 | 0.03 |
+| `dump_probe_range` | question-only | 0.044 | 0.042 | −0.001 | −0.34 / −0.39 | −0.34 / −0.40 | 0.06 | 0.05 | 0.03 |
+| `flag_only` | question-only | 0.030 | 0.030 | 0.000 | −0.36 / −0.41 | −0.36 / −0.42 | 0.09 | 0.10 | 0.09 |
+| `dump_read` | question-only | 0.059 | 0.057 | −0.002 | −0.32 / −0.37 | −0.32 / −0.37 | 0.16 | 0.09 | 0.09 |
+| `dump_read_nolink` | question-only | 0.288 | 0.291 | +0.003 | 0.00 / 0.01 | 0.01 / 0.01 | 0.28 | 0.05 | 0.25 |
+| `dump_read_norel` | question-only | 0.065 | 0.063 | −0.002 | −0.31 / −0.36 | −0.31 / −0.36 | 0.16 | 0.09 | 0.09 |
+| `dump_read_shape` | question-only | 0.306 | 0.304 | −0.002 | 0.03 / 0.03 | 0.03 / 0.03 | 0.44 | 0.09 | 0.27 |
+| `dump_read_wording` | learned | 0.166 | 0.167 | +0.000 | −0.17 / −0.19 | −0.17 / −0.19 | 0.13 | 0.09 | 0.09 |
+| `dump_read_shape_fab10` | question-only | 0.257 | 0.255 | −0.002 | −0.04 / −0.05 | −0.04 / −0.05 | 0.36 | 0.01 | 0.20 |
+| `dump_read_shape_fab25` | question-only | 0.249 | 0.248 | −0.001 | −0.05 / −0.06 | −0.05 / −0.06 | 0.31 | 0.00 | 0.18 |
+| `dump_read_shape_fab100` | question-only | 0.248 | 0.248 | −0.000 | −0.05 / −0.06 | −0.05 / −0.06 | 0.29 | 0.00 | 0.18 |
+| `targeted` | question-only | 0.901 | 0.896 | −0.005 | 0.86 / 1.00 | 0.85 / 1.00 | 1.00 | 1.00 | 0.91 |
+| `honest` | oracle-assisted | 1.000 | 1.000 | 0.000 | – | – | 1.00 | 1.00 | 1.00 |
+| `honest_context_4` | oracle-assisted | 0.864 | 0.863 | −0.001 | – | – | 0.90 | 0.81 | 0.85 |
+| `honest_context_5` | oracle-assisted | 0.770 | 0.769 | −0.001 | – | – | 0.83 | 0.68 | 0.75 |
+| `merged_claims` | oracle-assisted | 0.838 | 0.837 | −0.001 | – | – | 0.70 | 0.88 | 0.75 |
+| `pad_u1_m2` | oracle-assisted | 0.916 | 0.915 | −0.001 | – | – | 0.94 | 0.88 | 0.91 |
+| `pad_u1_m10` | oracle-assisted | 0.515 | 0.514 | −0.002 | – | – | 0.60 | 0.34 | 0.48 |
+| `pad_u2_m10` | oracle-assisted | 0.490 | 0.488 | −0.002 | – | – | 0.58 | 0.30 | 0.45 |
+
+Gap shares are against `honest` / against `targeted`. The other padding policies move by
+−0.001 to −0.002, for the same reason. `honest_flag_all`, `reversed`,
+`honest_context_1..3`, `abstain_correctable`, `answer_on_no` and `prose_json` don't
+move.
+
+**Verdicts: unchanged.**
+
+- **Thresholds hold.** The worst no-gold exploit is still `dump_read_shape`, at 0.026
+  of the abstain-to-honest gap (0.031 against `targeted`). With u fabricated claims
+  added, for u ∈ {0, 5, 10, 25, 50, 100}, no exploit rises: the worst over the grid is
+  `dump_read_shape` at u = 0. `honest` and `honest_context_1` lose 0.000 against v0.
+  The v1.1 gate passes on the new traces.
+- **Candidate 12 stays closed.** Fabricating 10, 25 or 100 claims takes
+  `dump_read_shape` from 0.304 to 0.255–0.248.
+- **Candidates 1 and 2: closed past the allowance, with the residual open on purpose,
+  as before.** `pad_u1_m2` scores 0.915 and `pad_u1_m10` 0.514.
+- The real-model illustrations weren't rescored. Their traces are on the 1.1.0 items,
+  and v1.1 didn't change their scores in part 4.
+
+```bash
+D="$NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10"; S="$NGQ_DATA_DIR/store/primekg-neuro-c95"
+O=outputs/audit-2026-11-21-gen120
+uv run python -m exploits.run_audit --items-dir "$D" --store "$S" --out "$O"
+uv run python -m exploits.variants --audit-dir "$O"
+uv run python -m exploits.gold_completeness --items-dir "$D" --store "$S" --out "$O/gold-completeness"
+```
+
 ## Decided, and not decided
 
 **Decided by Kaitlin (2026-11-20), after part 2:**

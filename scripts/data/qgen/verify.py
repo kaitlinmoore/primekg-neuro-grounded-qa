@@ -17,7 +17,10 @@ without trusting the generator's in-memory state:
   absent from the full graph (as a triple, and as a pair for ``no`` items) and gap
   triples are absent as pairs; every named entity passes the name rule with the
   recorded mention form and its name is in the question; no answer entity's name is
-  in the question; no entity is in an excluded HPO subtree; the gold points are
+  in the question; no entity is in an excluded HPO subtree; under the grouped-end
+  rule (manifest filter ``grouped_hierarchy_out``), no gold point, premise or gap is
+  a hierarchy edge with a grouped end and no role is read at an entity with one
+  (``candidates.grouped_hierarchy_problem``, the generator's own check); the gold points are
   exactly the store facts that answer the question under its template's answer rule
   (``qgen.answers``; ``gold_complete``);
 - **across splits** (when both are checked): no shared item ID, fact or
@@ -41,7 +44,7 @@ from pydantic import ValidationError
 
 from qgen import checks as qc
 from qgen.answers import Adjacency, gold_completeness
-from qgen.candidates import GROUP_PREFIX
+from qgen.candidates import GROUP_PREFIX, grouped_hierarchy_problem
 from qgen.files import SPLIT_FILES, item_counts, template_relation_keys
 
 ITEM_CHECKS = (
@@ -88,6 +91,8 @@ class Verifier:
         roots = filters.get("hpo_excluded_roots", [])
         self.excluded = fg.subtree_entities("phenotype_phenotype", "HPO", roots) if roots else set()
         self.skip_grouped = bool(filters.get("reversed_premise_skip_grouped", False))
+        # Absent from manifests before generator 1.2.0: those sets didn't apply it.
+        self.grouped_out = bool(filters.get("grouped_hierarchy_out", False))
         self.naming = filters.get("naming", "strict")
         self.lowercase = bool(filters.get("lowercase_phenotypes", False))
         self.split_seed = manifest["split"]["seed"]
@@ -190,6 +195,13 @@ class Verifier:
             if self.skip_grouped and (item.template_id or "").startswith("fp_reversed.") and item.premise:
                 dom_ok = dom_ok and not any(x.startswith(GROUP_PREFIX)
                                             for x in (item.premise.subject_id, item.premise.object_id))
+            if self.grouped_out and tpl is not None:
+                dom_ok = dom_ok and grouped_hierarchy_problem(
+                    tpl, notes["template_params"],
+                    [(gp.subject_id, gp.relation, gp.object_id) for gp in item.gold_points],
+                    [(t.subject_id, t.relation, t.object_id) for t in trips],
+                    self.adjacency.edges,
+                ) is None
             tally("domain", dom_ok)
             tally("gold_complete", gold_completeness(item, notes["template_params"], self.adjacency).ok)
 
