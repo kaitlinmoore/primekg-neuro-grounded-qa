@@ -23,6 +23,7 @@ dev = [
     "pytest",
     "ipykernel",
     "scikit-learn>=1.9.1",
+    "ruff>=0.17.6",
 ]
 # Graph download and measurement (scripts/data/, tests/data/). duckdb reads
 # PrimeKG's CSV and OptimusKG's parquet files directly and runs the joins and
@@ -40,6 +41,24 @@ link-mode = "copy"
 # A plain `uv sync` installs the data group too, so tests/data runs instead of
 # being skipped for want of duckdb.
 default-groups = ["dev", "data"]
+
+[tool.ruff]
+# Lint target matches .python-version and the package's requires-python, so ruff
+# doesn't flag 3.11 syntax or suggest syntax newer than 3.11.
+target-version = "py311"
+# Notebooks are not linted. Their setup cells put the repo on sys.path before
+# importing project code (E402 by design), and they import names for readers to
+# try in later cells; fixing either means editing code cells, which isn't a
+# mechanical lint fix. Lint them deliberately if that changes.
+extend-exclude = ["practice", "notebooks"]
+
+[tool.ruff.lint]
+# Pinned explicitly to the classic default set: E4 (imports), E7 (statements),
+# E9 (syntax and IO errors) and F (pyflakes: unused names, undefined names,
+# placeholder-less f-strings). Newer ruff releases ship a broader default, so
+# leaving `select` unset would change what CI enforces whenever ruff is
+# upgraded. Add rule families here deliberately, one at a time.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
