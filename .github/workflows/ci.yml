@@ -1,0 +1,54 @@
+# Lint and the full test suite on every pull request and every push to main.
+#
+# CI has no secrets and no graph data: no API keys, no NGQ_DATA_DIR, no items or
+# evidence store. Tests that need the real store or an item set skip themselves;
+# the integration tests run scripts/run.sh against the scripted stub endpoint, so
+# no model is called.
+#
+# Reproduce a failure locally (WSL, env loaded):
+#   uv sync --locked && uv run ruff check && uv run pytest -q
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same branch or PR cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # scripts/run.sh refuses to start without it (see CLAUDE.md, Environment),
+      # and the integration tests call run.sh. Point it at the usual .venv.
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # setup-uv publishes no floating major tag after v7, so pin the release by
+      # commit. uv is pinned to the version that wrote uv.lock, so `--locked`
+      # checks the lockfile the same way here as on the dev machine. Python comes
+      # from .python-version through uv.
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.8"
+          enable-cache: true
+
+      - name: Sync (lockfile must be current)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Test
+        run: uv run pytest -q
