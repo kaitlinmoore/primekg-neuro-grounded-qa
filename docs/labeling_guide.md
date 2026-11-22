@@ -57,7 +57,7 @@ Two consequences:
 | The item's gold points, each with its `directed` flag and listed evidence IDs | Parse result and parse-failure reason |
 | The premise, if the item has one, with its `directed` flag | `qtype`, `source`, `template_id` and `notes` (Q4 on `answerable`) |
 | The `directed` flag on each retrieved edge | Token counts, timings, tool-call counts and the run's other traces |
-| Reward results for the sealed validation subset, until the reward is final (Q19) | Your first-round grades, during the re-grade |
+|  | Reward results for the sealed validation subset, until the reward is final (Q19) |
 
 **The viewer also marks** (from the runs so far): for each directed edge, its stored order, the label the tools served in that trace ("subtype of" or "hierarchy link (direction not recorded for grouped diseases)" from 2026-11-21; PrimeKG's "parent-child" before), PrimeKG's own label, and whether either end is a grouped disease; tool calls on edge IDs no earlier result showed; tool results the harness rejected, with the reason; and a final message with no answer text, with the last earlier answer shown and labelled as earlier (Q14).
 
@@ -268,7 +268,8 @@ Grade the choice and the reason separately.
 Item       answerable: no   (the graph has no edge linking GENE_C and DIS_1)
 Retrieved  results that list DIS_1
 Answer     {"abstain": true, "reason": "The graph has no entity DIS_1."}
-Grade      choice_correct: yes; abstain_reason_ok: no
+Grade      choice_correct: yes; abstain_reason_ok: misleading
+           text_issue: says DIS_1 isn't in the graph, but the results list it
 ```
 
 ### R10. Correction cites the right edge but misstates the premise
@@ -281,7 +282,8 @@ Retrieved  E:000004  DRUG_X contraindicated_for DIS_2
 Answer     claim 0: DRUG_X contraindicated_for DIS_2   cites [E:000004]
            answer_text: "The question assumes DRUG_X targets DIS_2; in fact it is contraindicated."
 Grade      claim 0: supported: cited; premise_restatement: no
-           premise_handling: corrected_supported; text_ok: no
+           premise_handling: corrected_supported; text_ok: minor
+           text_issue: states the premise with the wrong relation
 ```
 
 If a claim also asserts `DRUG_X indicated_for DIS_2`, that claim is `premise_restatement: yes` and `premise_handling` is `corrected_and_accepted`.
