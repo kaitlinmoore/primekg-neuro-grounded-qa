@@ -392,3 +392,97 @@ observations, not effects.
 
 Run outputs, per-chunk and combined summaries, the comparison and the trace reading
 stay in `outputs/sonnet-train-2026-11-21/` (gitignored).
+
+## Train run 4 (Haiku, direction labels) (2026-11-21)
+
+Exploratory, on **train** items only; not results. One instrument changed: the label
+the KG tools show for directed edges. PrimeKG labels both directed relations
+(`disease_disease`, `phenotype_phenotype`) `parent-child`, which reads as subject =
+parent, while the store keeps them subject = child, object = parent. The tools now
+show `subtype of` for a directed edge with no grouped end and `hierarchy link
+(direction not recorded for grouped diseases)` for one with a grouped disease at
+either end (`tools.kg.direction_label`). `relation`, IDs, `directed`, subject/object
+order, store, items, reward v1.1, prompt and parser are unchanged, and
+`display_relation` is never scored.
+
+**What ran.** `claude-haiku-5-5` through `scripts/run.sh`, with run 2's command and
+settings: one rollout on each of the 200 train items (`train.jsonl`, sha256
+`a39776ad…`, run directly). The resolved config is identical to run 2's apart from
+the output directory. Cost $0.43 (3.31M input and 0.21M output tokens), against an
+estimate of $0.42 from the Haiku baseline's tokens and a $1 stop. No held-out item was
+loaded.
+
+**What was measured.** Everything run 3 measured, paired by item with the Haiku
+baseline on the same items (run 2's 189 kept traces plus the 11-item top-up, served
+with `parent-child`; mean 0.866). Seeded paired bootstrap intervals, for orientation.
+For every trace shown a directed edge (57 items, either run), the direction its
+claims state (in code) and its text states (read, after a pattern pass for hierarchy
+wording). The traces read were those, plus every item that showed a directed edge and
+changed score.
+
+**What it showed.** One rollout per item on each side, so item-level differences are
+observations, not effects.
+
+- The plumbing held on all 200 traces: v1.1, the store `build_id`, the train hash;
+  offline rescoring exact; v0, v1 and v1.1 reproduce the reward's own; no rejected tool
+  result; no group-ID misuse. Every directed edge in the tool results carried the
+  label its ends call for. First-call prompt tokens are unchanged (median 2,144).
+- **Reward.** 0.882 (95% interval 0.840–0.922) against 0.866; paired difference
+  +0.017 (−0.026 to 0.060), so no change overall at this size. By type:
+
+  | type | items | baseline | run 4 | difference (95% interval) |
+  |---|---|---|---|---|
+  | `single_hop` | 60 | 0.950 | 0.933 | −0.017 (−0.083 to 0.050) |
+  | `multi_hop` | 50 | 0.810 | 0.870 | +0.060 (−0.030 to 0.150) |
+  | `partial` | 30 | 0.948 | 0.993 | +0.045 (0.000 to 0.124) |
+  | `false_premise` | 20 | 0.710 | 0.810 | +0.100 (−0.015 to 0.250) |
+  | `unanswerable` | 40 | 0.825 | 0.775 | −0.050 (−0.175 to 0.075) |
+
+  168 items score the same; 29 differ by 0.5 or more (run 4 higher on 17). Only 8 of
+  the 32 changed items showed a directed edge in either run; the other 24 couldn't
+  have been reached by the label, and their changes are the run-to-run kind seen
+  before (parse failures on different items, merged claims, `no` items flipping
+  between abstention and a flagged "none" answer).
+- **Direction.** 56 run 4 traces were shown a directed edge (28 with a grouped end),
+  against 48 in the baseline. No claim in either run states a directed edge in the
+  reversed order.
+  - Plain edges: the baseline described the hierarchy backwards in 2 replies
+    (`q-3a579fbf59ba`, the run 3 case, and `q-b53f331b49f8`, an abstention whose reason
+    reverses two edges). Run 4 read both correctly and misread none: it reads `subtype
+    of` in the stored order throughout, often quoting it.
+  - `q-3a579fbf59ba` went from a parse failure whose text took the edge as confirming
+    the false premise (0) to a flagged answer that corrects it ("Huntington disease is
+    a subtype of inherited tremor disorder, not the other way around", 1.0). It is the
+    only score change the reading ties to the label.
+  - Grouped edges: the baseline read `parent-child` as subject = parent on 3 replies
+    (`E:014583`, `E:014579`). Those are edges stored broader → narrower by name, so the
+    reading matched the names and was the opposite of the stored order. In run 4, 6
+    replies used the grouped label's wording; they describe the link neutrally or fall
+    back on the entity names, and none claims a grouped hierarchy edge. One calls the
+    link "undirected" (`q-49b29b5997b7`), which is loose: the reward still matches it in
+    the stored order only.
+  - Of the other 7 changed items that showed a directed edge, none turns on direction:
+    two `no` items answered "none" with correct context claims instead of abstaining
+    (`q-342d24c2c025`, `q-5257fd6f2343`, 1.0 → 0), two prose leads (parse failures),
+    one merged claim, a `correctable` item answered instead of abstained (0.7 → 1.0),
+    and less context padding on `q-6a35d55e2332` (0.444 → 0.800).
+- **Parse failures: 6, against 10, on different items** (one in both). All are prose
+  before correct JSON (each would score 1.0 alone); 4 are remarks that an undirected
+  edge's order doesn't matter.
+- **Abstention.** No wrong abstention in either run. `no` items: 39 abstentions
+  against 41; every `no`-item answer was flagged and scored 0. `correctable`: 0.82
+  against 0.62, from fewer parse failures (0 against 2) and more corrected answers
+  (4 against 2).
+- **Precision.** One charge in 138 answers on items other than `no`
+  (`q-6a35d55e2332`, smaller than the baseline's); no unsupported fact in either run.
+- **Merged claims** 7 answers against 9; **tool use** 5.3 calls per rollout against
+  5.2, with 10 budget hits against 5; one `get_edge` call on an unseen ID in each run.
+
+**What this makes stale.** Direction readings in runs 1–3 were made under
+`parent-child`, so they describe that label, not the tools as they are now. Comparing a
+later run with runs 1–3 confounds the model (or the rollout) with the label on any
+trace shown a directed edge (about 28% of items here); other measures are unaffected,
+since nothing else in the tool results changed.
+
+Run outputs, the comparison, the direction snippets and the trace reading stay in
+`outputs/haiku-train-4-2026-11-21/` (gitignored).

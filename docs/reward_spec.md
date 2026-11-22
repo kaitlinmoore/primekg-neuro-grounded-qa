@@ -145,7 +145,10 @@ stored order only if the edge is flagged `directed`.
   reversed). An edge with a PrimeKG grouped disease at either end takes its order from
   one member pair, so by the group's name it can read parent → child, and three such
   edges form a cycle. The reward still accepts only the stored order. See "Grouped
-  entities and edge direction" in `docs/question_set_design.md`.
+  entities and edge direction" in `docs/question_set_design.md`. The tools show these
+  edges with a `display_relation` that states the direction (`subtype of` for single
+  terms; `hierarchy link (direction not recorded for grouped diseases)` with a grouped
+  end) instead of PrimeKG's `parent-child`; `display_relation` is never scored.
 - Relation labels match exactly: no case folding, synonym or inverse-label matching.
 - Names (`subject_name`, `object_name`) are never compared.
 - Extra non-supporting cites alongside a supporting one cost nothing in the score; they

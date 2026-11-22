@@ -70,6 +70,27 @@ almost every call, so cut pages stopped carrying any count, and one model probed
 IDs one by one to find the rest. Like the summaries, the count is a navigation aid in
 ``note``, not evidence.
 
+**Direction labels.** Every edge a tool returns passes through :func:`served_edge`,
+which sets the ``display_relation`` of a *directed* edge to a label that says which
+way it runs. PrimeKG labels both directed relations (``disease_disease``,
+``phenotype_phenotype``) ``parent-child``, which reads as "the subject is the parent",
+but the store keeps them subject = child, object = parent. In train run 3 both models
+claimed the right triple and then described it backwards in their text. So:
+
+- a directed edge with no grouped end shows ``subtype of``
+  (:data:`SUBTYPE_LABEL`): subject ``subtype of`` object reads correctly in the
+  stored order. Rechecked against OptimusKG before the label was written: of the
+  plain edges it can decide (141 disease, 828 phenotype), none runs the other way.
+- a directed edge with a PrimeKG grouped disease at either end (an ID starting
+  ``group:``) shows :data:`GROUPED_HIERARCHY_LABEL`, which says plainly that the
+  direction isn't known: a group merges several MONDO terms, PrimeKG doesn't record
+  which member an edge came from, and some such edges run broader -> narrower.
+
+Only the label changes. ``relation``, the IDs, ``directed`` and subject/object order
+are the store's, so scoring is untouched (``display_relation`` is never scored).
+Undirected edges keep their stored label. The label is applied before the payload
+cap is checked, so the cap still holds.
+
 **Call budget.** The tool server is *shared*: one process serves every rollout of a
 run (``Taskset.toolsets``), so a counter on the server object would mix rollouts.
 Verifiers 0.4.1 has a per-rollout channel for exactly this: a ``vf.State`` subclass
@@ -136,6 +157,48 @@ DEFAULT_MAX_PAYLOAD_BYTES = 16_000
 
 ECHO_MAX_CHARS = 80
 """Most characters of a model-supplied argument a note repeats back."""
+
+
+GROUP_ID_PREFIX = "group:"
+"""ID prefix of PrimeKG grouped diseases in the store (``data.build.GROUP_PREFIX``
+plus the colon). Kept as a literal so the tool server doesn't import the builder."""
+
+SUBTYPE_LABEL = "subtype of"
+"""Label shown for a directed edge with no grouped end. The store orients these
+subject = child (narrower), object = parent (broader), so "subject subtype of object"
+reads correctly in the stored order."""
+
+GROUPED_HIERARCHY_LABEL = "hierarchy link (direction not recorded for grouped diseases)"
+"""Label shown for a directed edge with a grouped disease at either end, whose
+direction at the level of the entities shown isn't known."""
+
+
+def direction_label(edge: EdgeEvidence) -> str | None:
+    """The label tools show for ``edge``: the one place this is decided.
+
+    Returns :data:`GROUPED_HIERARCHY_LABEL` for a directed edge with a ``group:`` end,
+    :data:`SUBTYPE_LABEL` for any other directed edge, and the stored
+    ``display_relation`` (possibly None) for an undirected edge.
+    """
+    if not edge.directed:
+        return edge.display_relation
+    if edge.subject.id.startswith(GROUP_ID_PREFIX) or edge.object.id.startswith(
+        GROUP_ID_PREFIX
+    ):
+        return GROUPED_HIERARCHY_LABEL
+    return SUBTYPE_LABEL
+
+
+def served_edge(edge: EdgeEvidence) -> EdgeEvidence:
+    """``edge`` as a tool returns it: the store's edge with :func:`direction_label`.
+
+    Returns the same object when the label doesn't change (every undirected edge), and
+    otherwise a copy that differs only in ``display_relation``.
+    """
+    label = direction_label(edge)
+    if label == edge.display_relation:
+        return edge
+    return edge.model_copy(update={"display_relation": label})
 
 
 def _echo(value: str) -> str:
@@ -417,7 +480,7 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
             return _payload(note=note)
         cap = self.config.max_results
         edges = self.store.neighbors(entity_id, relation, offset + cap + 1)
-        page = edges[offset : offset + cap]
+        page = [served_edge(edge) for edge in edges[offset : offset + cap]]
         more = len(edges) > offset + cap
 
         def hint(shown: int) -> str:
@@ -450,7 +513,7 @@ class KGToolset(vf.Toolset[KGToolsetConfig, KGState]):
         edge = self.store.get(edge_id)
         if edge is None:
             return _payload(note=f"No edge with ID {_echo(edge_id)}.")
-        return _payload(evidence=[edge])
+        return _payload(evidence=[served_edge(edge)])
 
 
 if __name__ == "__main__":
