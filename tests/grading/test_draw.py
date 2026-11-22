@@ -36,7 +36,7 @@ from grading_common import (  # noqa: E402
 
 
 def _draw(out: Path, **kw) -> dict:
-    args = dict(cells=CELLS, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
+    args = dict(cells=CELLS, sealed_sizes=SEALED, exclude_from=EXCLUDE,
                 exclude_root=FIXTURES, today="2026-01-01")
     args.update(kw)
     return draw.run_draw(ITEMS, list(RUNS), out, **args)
@@ -86,15 +86,31 @@ def test_key_file_fields_ids_and_order(tmp_path):
     assert len(set(firsts)) > 1
 
 
-def test_sealed_subset_is_stratified_and_holds_ids_only(tmp_path):
-    rec = _draw(tmp_path, sealed_per_answerable=2)
+def test_sealed_subset_has_the_sizes_per_value_and_holds_ids_only(tmp_path):
+    sizes = {"correctable": 1, "no": 2, "partial": 3, "yes": 4}
+    rec = _draw(tmp_path, sealed_sizes=sizes)
     sealed = json.loads((tmp_path / SEALED_FILE).read_text())
     key = {k["grading_id"]: k for k in read_jsonl(tmp_path / KEY_FILE)}
     assert isinstance(sealed, list) and all(isinstance(g, str) for g in sealed)
     assert set(sealed) <= set(key)
-    assert Counter(key[g]["answerable"] for g in sealed) == {a: 2 for a in
-                                                             ("correctable", "no", "partial", "yes")}
-    assert rec["sealed"] == {a: 2 for a in ("correctable", "no", "partial", "yes")}
+    assert Counter(key[g]["answerable"] for g in sealed) == sizes
+    assert rec["sealed"] == rec["sealed_requested"] == sizes
+
+
+def test_default_sealed_sizes_are_proportional():
+    assert draw.SEALED == {"correctable": 2, "no": 5, "partial": 5, "yes": 8}
+    assert sum(draw.SEALED.values()) == 20
+    for a, n in draw.SEALED.items():  # within one of 20 x the value's share of the sample
+        share = 20 * draw.CELLS[a] / sum(draw.CELLS.values())
+        assert abs(n - share) < 1, a
+
+
+def test_sealed_sizes_are_checked_before_writing(tmp_path):
+    with pytest.raises(GradingError, match="exceed"):
+        _draw(tmp_path, sealed_sizes={**SEALED, "yes": 5})  # 4 "yes" traces drawn
+    with pytest.raises(GradingError, match="sealed sizes are for"):
+        _draw(tmp_path, sealed_sizes={"no": 1})
+    assert not (tmp_path / KEY_FILE).exists()
 
 
 def test_unequal_cells_are_filled_and_recorded(tmp_path):
@@ -204,9 +220,15 @@ def test_exclusion_ids_by_pattern(tmp_path):
 def test_main_prints_no_ids_or_cell_counts(tmp_path, capsys):
     rc = draw.main(["--items", str(ITEMS), "--runs", *map(str, RUNS), "--dir", str(tmp_path),
                     "--cells", ",".join(f"{a}={n}" for a, n in CELLS.items()),
-                    "--sealed-per-answerable", str(SEALED)])
+                    "--sealed", ",".join(f"{a}={n}" for a, n in SEALED.items())])
     out = capsys.readouterr().out
     assert rc == 0 and "draw: PASS" in out
+    # Only the PASS line, the exclusion list's size and hash, and the files' hashes:
+    # nothing about cells or the sealed subset.
+    lines = out.splitlines()
+    assert lines[0] == "draw: PASS" and lines[1].startswith("exclusion list: ")
+    assert all(re.fullmatch(r"[a-z_]+\.jsonl?: sha256 [0-9a-f]{64}", ln) for ln in lines[2:])
+    assert len(lines) == 5
     assert not re.search(r"\b[qg]-[0-9a-f]{8,}", out)
     assert "sentinel-model" not in out and "yes" not in out
 
@@ -229,7 +251,7 @@ def test_accepts_runs_made_from_a_recorded_selection_of_train(tmp_path):
     cfg = json.loads(cfg_path.read_text())
     cfg["env"]["taskset"]["items_path"] = str(sel_items)
     cfg_path.write_text(json.dumps(cfg))
-    kw = dict(cells=CELLS, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
+    kw = dict(cells=CELLS, sealed_sizes=SEALED, exclude_from=EXCLUDE,
               exclude_root=FIXTURES)
     with pytest.raises(GradingError, match="SHA-256"):
         draw.run_draw(ITEMS, [dst, RUN_DIRECTION], tmp_path / "out", **kw)

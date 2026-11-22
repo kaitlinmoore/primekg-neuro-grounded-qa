@@ -33,8 +33,8 @@ What it does, in order:
    shortfall (counts only), writing nothing.
 4. Gives each drawn trace an opaque ``grading_id`` (random hex from its own seed),
    shuffles the grading order with the order seed, and draws the **sealed validation
-   subset** (``--sealed-per-answerable`` per ``answerable`` value) with the sealed
-   seed.
+   subset** (``--sealed`` traces from each ``answerable`` value, in proportion to
+   its cell size) with the sealed seed.
 5. Writes, into the round directory (outside the repo):
 
    - ``grading_key.jsonl``: one line per grading_id in grading order: ``grading_id``,
@@ -101,8 +101,10 @@ CELLS = {"correctable": 4, "no": 8, "partial": 8, "yes": 12}
 """Traces per model for each ``answerable`` value: (4 + 8 + 8 + 12) x 2 models = 64.
 Unequal because the train set has only 10 ``correctable`` items (Kaitlin's decision,
 2026-11-22)."""
-SEALED_PER_ANSWERABLE = 5
-"""Sealed traces per answerable value: 4 x 5 = 20."""
+SEALED = {"correctable": 2, "no": 5, "partial": 5, "yes": 8}
+"""Sealed traces per ``answerable`` value, across both models: 20 in all, in
+proportion to the cell sizes (Kaitlin's decision, 2026-11-22). Recorded in
+``draw.json``; never printed."""
 
 EXCLUDE_FROM = (
     "docs/methodology.md",
@@ -297,13 +299,14 @@ class Drawn:
     ref: TraceRef
 
 
-def parse_cells(text: str) -> dict[str, int]:
-    """``correctable=4,no=8,...`` as a dict; every size a positive integer."""
+def parse_cells(text: str, flag: str = "--cells") -> dict[str, int]:
+    """``correctable=4,no=8,...`` as a dict; every size a positive integer. Used for
+    ``--cells`` and ``--sealed``."""
     out: dict[str, int] = {}
     for part in text.split(","):
         name, sep, size = part.strip().partition("=")
         if not sep or not name or name in out or not size.strip().isdigit() or int(size) < 1:
-            raise GradingError(f"--cells: can't read {part.strip()!r} "
+            raise GradingError(f"{flag}: can't read {part.strip()!r} "
                                "(expected answerable=positive integer, each value once)")
         out[name] = int(size)
     return out
@@ -389,18 +392,29 @@ def assign_ids_and_order(
     return [Drawn(gid, pos, ref) for pos, (gid, ref) in enumerate(pairs, start=1)]
 
 
-def draw_sealed(drawn: Sequence[Drawn], per_answerable: int,
+def draw_sealed(drawn: Sequence[Drawn], sizes: Mapping[str, int],
                 seed: str = SEALED_SEED) -> list[str]:
-    """The sealed validation subset: ``per_answerable`` grading IDs from each
-    ``answerable`` value (all of them if fewer), seeded, returned sorted."""
+    """The sealed validation subset: ``sizes[a]`` grading IDs from each ``answerable``
+    value ``a``, seeded, returned sorted.
+
+    Raises:
+        GradingError: if ``sizes`` doesn't name exactly the drawn ``answerable``
+            values, or asks for more traces than a value has. The message names
+            neither counts nor IDs.
+    """
     by_a: dict[str, list[str]] = defaultdict(list)
     for d in drawn:
         by_a[d.ref.answerable].append(d.grading_id)
+    if set(sizes) != set(by_a):
+        raise GradingError(f"sealed sizes are for {sorted(sizes)}; the sample has "
+                           f"{sorted(by_a)}")
+    too_many = sorted(a for a in by_a if sizes[a] > len(by_a[a]))
+    if too_many:
+        raise GradingError(f"sealed sizes exceed the traces drawn for {too_many}")
     rng = random.Random(seed)
     out: list[str] = []
     for a in sorted(by_a):
-        pool = sorted(by_a[a])
-        out.extend(rng.sample(pool, min(per_answerable, len(pool))))
+        out.extend(rng.sample(sorted(by_a[a]), sizes[a]))
     return sorted(out)
 
 
@@ -432,7 +446,7 @@ def run_draw(
     out_dir: Path,
     *,
     cells: Mapping[str, int] = CELLS,
-    sealed_per_answerable: int = SEALED_PER_ANSWERABLE,
+    sealed_sizes: Mapping[str, int] = SEALED,
     exclude_from: Sequence[str] = EXCLUDE_FROM,
     exclude_root: Path = REPO,
     seed: str = DRAW_SEED,
@@ -464,7 +478,7 @@ def run_draw(
     ids_seed, sealed_seed = f"{seed}/ids", f"{seed}/sealed"
     picked, incomplete = draw_cells(refs, excluded, cells, seed, assign_seed)
     drawn = assign_ids_and_order(picked, ids_seed, order_seed)
-    sealed = draw_sealed(drawn, sealed_per_answerable, sealed_seed)
+    sealed = draw_sealed(drawn, sealed_sizes, sealed_seed)
 
     key_text = jsonl_text(key_records(drawn))
     sealed_text = json.dumps(sealed, indent=2) + "\n"
@@ -483,7 +497,7 @@ def run_draw(
         "seeds": {"draw": seed, "assign": assign_seed, "order": order_seed, "ids": ids_seed,
                   "sealed": sealed_seed},
         "cells_per_model": dict(sorted(cells.items())),
-        "sealed_per_answerable": sealed_per_answerable,
+        "sealed_requested": dict(sorted(sealed_sizes.items())),
         "train_file": {"path": train_file.name, "sha256": train_sha, "items": len(items)},
         "runs": [
             {"run": run, "traces_sha256": sha256_file(d / "traces.jsonl"),
@@ -526,14 +540,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cells", default=",".join(f"{a}={n}" for a, n in CELLS.items()),
                     help="traces per model for each answerable value "
                          "(default: %(default)s)")
-    ap.add_argument("--sealed-per-answerable", type=int, default=SEALED_PER_ANSWERABLE)
+    ap.add_argument("--sealed", default=",".join(f"{a}={n}" for a, n in SEALED.items()),
+                    help="sealed traces for each answerable value, across models "
+                         "(default: %(default)s)")
     ap.add_argument("--seed", default=DRAW_SEED)
     ap.add_argument("--force", action="store_true", help="replace an existing draw")
     args = ap.parse_args(argv)
     try:
         out_dir = args.dir or default_round_dir()
         record = run_draw(args.items, args.runs, out_dir, cells=parse_cells(args.cells),
-                          sealed_per_answerable=args.sealed_per_answerable, seed=args.seed,
+                          sealed_sizes=parse_cells(args.sealed, "--sealed"), seed=args.seed,
                           force=args.force)
     except GradingError as e:
         print(f"draw: FAIL: {e}")

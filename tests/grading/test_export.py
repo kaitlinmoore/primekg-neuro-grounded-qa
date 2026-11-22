@@ -4,6 +4,7 @@ earlier-answer rule come out right, for traces shaped like both source runs."""
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -73,6 +74,29 @@ def test_written_export_is_clean_and_checks_pass(pristine_round):
     assert "q-0000000000" not in text, "item IDs must stay in the key file"
     rows = export.check_export(out, expect=16)
     assert all(ok for _, ok, _ in rows), rows
+
+
+def test_check_prints_pass_fail_only(pristine_round, capsys):
+    """The grader runs --check, so it prints check names and pass/fail: no digit but
+    the record total it was told to expect, no run name and no hash."""
+    rc = export.main(["--check", "--dir", str(pristine_round), "--expect", "16"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.splitlines()[-1] == "export check: PASS (16 records expected)"
+    assert not any(ch.isdigit() for ch in re.sub(r"\b16\b", "", out)), out
+    assert all(re.fullmatch(r"(PASS|FAIL)  [A-Za-z -]+", ln) for ln in out.splitlines()[:-1])
+    for word in ("sha256", "runs/", "sentinel", "parent-child", "direction-labels"):
+        assert word not in out
+
+
+def test_check_fails_without_details(pristine_round, tmp_path, capsys):
+    import shutil
+
+    rd = tmp_path / "copy"
+    shutil.copytree(pristine_round, rd)
+    rc = export.main(["--check", "--dir", str(rd), "--expect", "17"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "FAIL  record count" in out
+    assert not any(ch.isdigit() for ch in re.sub(r"\b17\b", "", out)), out
 
 
 def _directed(rec):

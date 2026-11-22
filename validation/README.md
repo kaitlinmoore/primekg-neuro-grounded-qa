@@ -41,9 +41,9 @@ uv run python scripts/grading/draw.py \
          outputs/sonnet-train-2026-11-21/c3 outputs/sonnet-train-2026-11-21/c4
 ```
 
-Defaults: seed `ngq-grade-first-v1` (assign, order, ID and sealed seeds derive from it), `--cells correctable=4,no=8,partial=8,yes=12` (traces per model: 64 in all; unequal because the train set has only 10 `correctable` items), `--sealed-per-answerable 5`. It refuses to replace an existing draw unless `--force` is given.
+Defaults: seed `ngq-grade-first-v1` (assign, order, ID and sealed seeds derive from it), `--cells correctable=4,no=8,partial=8,yes=12` (traces per model: 64 in all; unequal because the train set has only 10 `correctable` items), `--sealed correctable=2,no=5,partial=5,yes=8` (sealed traces across both models: 20, in proportion to the cell sizes; the counts drawn are recorded in `draw.json` and not printed). It refuses to replace an existing draw unless `--force` is given.
 
-**2. Export.** Builds `export.jsonl` from the key file, then checks it by code (count, order, no forbidden key, every step-2 block, the served label on every directed edge). Neither command prints a record.
+**2. Export.** Builds `export.jsonl` from the key file, then checks it by code (count, order, no forbidden key, every step-2 block, the served label on every directed edge). Neither command prints a record. `--check` prints only each check's name with PASS or FAIL and the expected total: no counts, run names or hashes, since those describe the sample.
 
 ```bash
 uv run python scripts/grading/export.py --items $NGQ_DATA_DIR/items/primekg-2.1-6d869fa6bb10

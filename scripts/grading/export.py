@@ -448,8 +448,9 @@ def _raw_served_labels(saved: Mapping[str, Any]) -> set[tuple[str, str | None]]:
 
 def check_export(round_dir: Path, expect: int | None = None,
                  store: Path | None = None) -> list[tuple[str, bool, str]]:
-    """Code checks on a written export. Returns (check, passed, safe detail) rows; the
-    details hold counts and run names only."""
+    """Code checks on a written export. Returns (check, passed, detail) rows. The
+    details hold counts and run names about the sample, so ``main`` prints only the
+    check names and pass/fail; the details are for tests and debugging."""
     key = sorted(read_jsonl(round_dir / KEY_FILE), key=lambda k: k["position"])
     export = read_jsonl(round_dir / EXPORT_FILE)
     rows: list[tuple[str, bool, str]] = []
@@ -466,7 +467,7 @@ def check_export(round_dir: Path, expect: int | None = None,
         if isinstance(r.get("step2"), dict) and all(k in r["step2"] for k in STEP2_KEYS)
         and r["step2"]["answerable"] in ("yes", "partial", "correctable", "no")
     )
-    rows.append(("every step-2 block present", step2_ok == n, f"{step2_ok} of {n}"))
+    rows.append(("every step-two block present", step2_ok == n, f"{step2_ok} of {n}"))
 
     stores = Stores(store)
     by_id = {k["grading_id"]: k for k in key}
@@ -501,10 +502,12 @@ def check_export(round_dir: Path, expect: int | None = None,
                  mismatched == 0, f"{n_directed} directed edges, {mismatched} mismatched"))
     rows.append(("PrimeKG label and grouped flag match the store", labels_off == 0,
                  f"{labels_off} off"))
-    for run in sorted({k["run"] for k in key}):
-        e = eras.get(run, set())
-        rows.append((f"served labels consistent within {run}",
-                     len(e) <= 1 and "other" not in e, ", ".join(sorted(e)) or "no directed edges"))
+    runs = sorted({k["run"] for k in key})
+    rows.append(("served labels consistent within each run",
+                 all(len(eras.get(r, set())) <= 1 and "other" not in eras.get(r, set())
+                     for r in runs),
+                 "; ".join(f"{r}: {', '.join(sorted(eras.get(r, set()))) or 'no directed edges'}"
+                           for r in runs)))
     return rows
 
 
@@ -523,11 +526,13 @@ def main(argv: list[str] | None = None) -> int:
         round_dir = args.dir or default_round_dir()
         if args.check:
             rows = check_export(round_dir, args.expect, args.store)
-            for name, ok, detail in rows:
-                print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f" ({detail})" if detail else ""))
+            # Names and pass/fail only: no counts, run names or hashes, since the
+            # grader runs this and the details describe the sample.
+            for name, ok, _ in rows:
+                print(f"{'PASS' if ok else 'FAIL'}  {name}")
             ok = all(ok for _, ok, _ in rows)
-            print(f"export check: {'PASS' if ok else 'FAIL'}")
-            print(f"{EXPORT_FILE}: sha256 {sha256_file(round_dir / EXPORT_FILE)}")
+            expected = f" ({args.expect} records expected)" if args.expect is not None else ""
+            print(f"export check: {'PASS' if ok else 'FAIL'}{expected}")
             return 0 if ok else 1
         if args.items is None:
             ap.error("--items is required unless --check")
