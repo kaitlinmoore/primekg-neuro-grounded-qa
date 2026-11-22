@@ -17,14 +17,20 @@ What it does, in order:
    the files Kaitlin has read about items and their scores (``EXCLUDE_FROM``). Only
    the IDs are taken, by pattern; the files are never summarized. Excluded items
    can't enter the sample, so the grader can't recognize a trace from the docs.
-3. Puts each remaining trace in a **cell**: (the item's ``answerable`` value, the
-   model recorded in the trace). For each ``answerable`` value in sorted order, and
-   each model in sorted order, it draws ``--per-cell`` items with the draw seed,
-   **each item at most once in the whole sample**: an item drawn for one model is
-   removed from every other model's pool, so the grader never sees two models answer
-   the same question. If an item has several traces for one model, one is chosen by
-   the same seed. If any cell can't be filled it stops and prints the shortfall
-   (counts only), writing nothing.
+3. Fills the **cells**: (the item's ``answerable`` value, the model recorded in the
+   trace), with ``--cells`` items per model for each ``answerable`` value. For each
+   value, in two seeded steps:
+
+   a. **Items.** From the value's items that are not excluded and have a trace from
+      every model, it draws (cell size x number of models) items with the draw seed.
+   b. **Models.** It shuffles those items with the assign seed and splits them into
+      one block per model (models in sorted order). No model fills first from a
+      shared pool, so the split doesn't favour one model.
+
+   **Each item is at most once in the whole sample**, so the grader never sees two
+   models answer the same question. If an item has several traces for its model, one
+   is chosen by the draw seed. If any value has too few items it stops and prints the
+   shortfall (counts only), writing nothing.
 4. Gives each drawn trace an opaque ``grading_id`` (random hex from its own seed),
    shuffles the grading order with the order seed, and draws the **sealed validation
    subset** (``--sealed-per-answerable`` per ``answerable`` value) with the sealed
@@ -36,8 +42,8 @@ What it does, in order:
      repo), ``trace_id``, ``trace_line`` and ``trace_index`` (where the trace sits in
      ``traces.jsonl``), ``item_id`` and ``answerable``.
    - ``sealed.json``: the sealed grading_ids, as a JSON list, nothing else.
-   - ``draw.json``: the seeds, the train file's and every run's ``traces.jsonl``
-     SHA-256, the exclusion list's size and SHA-256 (of its sorted IDs, one per
+   - ``draw.json``: the seeds, the requested cell sizes, the train file's and every
+     run's ``traces.jsonl`` SHA-256, the exclusion list's size and SHA-256 (of its sorted IDs, one per
      line), how many source files each pattern matched and one hash over them (no
      file names), the cell counts and the sealed counts.
 
@@ -85,13 +91,16 @@ from qgen.safety import ItemsError
 from qgen.view import load_train, train_path
 
 DRAW_SEED = "ngq-grade-first-v1"
-"""Seed of the cell draw. The order, ID and sealed seeds are derived from it."""
+"""Seed of the item draw. The assign, order, ID and sealed seeds are derived from it."""
+ASSIGN_SEED = f"{DRAW_SEED}/assign"
 ORDER_SEED = f"{DRAW_SEED}/order"
 IDS_SEED = f"{DRAW_SEED}/ids"
 SEALED_SEED = f"{DRAW_SEED}/sealed"
 
-PER_CELL = 8
-"""Traces per (answerable, model) cell: 4 values x 2 models x 8 = 64."""
+CELLS = {"correctable": 4, "no": 8, "partial": 8, "yes": 12}
+"""Traces per model for each ``answerable`` value: (4 + 8 + 8 + 12) x 2 models = 64.
+Unequal because the train set has only 10 ``correctable`` items (Kaitlin's decision,
+2026-11-22)."""
 SEALED_PER_ANSWERABLE = 5
 """Sealed traces per answerable value: 4 x 5 = 20."""
 
@@ -100,10 +109,10 @@ EXCLUDE_FROM = (
     "docs/reward_hacking_audit.md",
     "docs/question_set_design.md",
     "docs/changelog.md",
-    "handoffs/**/*.md",
 )
 """Repo-relative files (globs) whose item IDs are excluded from the sample: the
-documents in which Kaitlin has read about items and their scores."""
+committed documents that discuss items and their scores (Kaitlin's decision,
+2026-11-22: these four only)."""
 
 ITEM_ID_RE = re.compile(r"\bq-[0-9a-f]{12}\b")
 """An item ID as the generator writes it (``qgen.checks.item_id``)."""
@@ -269,12 +278,13 @@ def ids_sha256(ids: Iterable[str]) -> str:
 
 
 class Shortfall(GradingError):
-    """At least one cell can't be filled. Carries counts per short cell only."""
+    """At least one ``answerable`` value has too few items. Carries counts only:
+    {answerable: (items available, items needed)}."""
 
-    def __init__(self, short: Mapping[tuple[str, str], tuple[int, int]]):
+    def __init__(self, short: Mapping[str, tuple[int, int]]):
         self.short = dict(short)
-        parts = [f"{a} x {m}: {have} available, {need} needed"
-                 for (a, m), (have, need) in sorted(self.short.items())]
+        parts = [f"{a}: {have} available, {need} needed"
+                 for a, (have, need) in sorted(self.short.items())]
         super().__init__("cell(s) can't be filled: " + "; ".join(parts))
 
 
@@ -287,44 +297,77 @@ class Drawn:
     ref: TraceRef
 
 
-def draw_cells(
-    refs: Sequence[TraceRef], excluded: set[str], per_cell: int, seed: str = DRAW_SEED
-) -> list[TraceRef]:
-    """Draw ``per_cell`` traces for every (answerable, model) cell, each item at most
-    once across the whole sample.
+def parse_cells(text: str) -> dict[str, int]:
+    """``correctable=4,no=8,...`` as a dict; every size a positive integer."""
+    out: dict[str, int] = {}
+    for part in text.split(","):
+        name, sep, size = part.strip().partition("=")
+        if not sep or not name or name in out or not size.strip().isdigit() or int(size) < 1:
+            raise GradingError(f"--cells: can't read {part.strip()!r} "
+                               "(expected answerable=positive integer, each value once)")
+        out[name] = int(size)
+    return out
 
-    Cells are filled in sorted order (answerable, then model) from one RNG seeded with
-    ``seed``; an item drawn for one model leaves every other pool. Pools are sorted
-    before sampling, so the draw depends only on the traces and the seed, not on file
-    order.
+
+def draw_cells(
+    refs: Sequence[TraceRef],
+    excluded: set[str],
+    cells: Mapping[str, int],
+    seed: str = DRAW_SEED,
+    assign_seed: str = ASSIGN_SEED,
+) -> tuple[list[TraceRef], dict[str, int]]:
+    """Draw ``cells[a]`` traces per model for every ``answerable`` value ``a``, each
+    item at most once across the whole sample.
+
+    Per value (in sorted order): the pool is the value's items that are not excluded
+    and have a trace from every model; ``cells[a]`` x (number of models) items are
+    drawn from it with ``seed``; those are shuffled with ``assign_seed`` and split
+    into one block per model, models in sorted order. Pools are sorted before
+    sampling, so the draw depends only on the traces and the seeds, not on file order.
+
+    Returns:
+        The drawn traces, and for each value the number of its non-excluded items left
+        out for lacking some model's trace (zero when every run covers every item).
 
     Raises:
-        Shortfall: if any cell has fewer than ``per_cell`` eligible items once earlier
-            cells have taken theirs.
+        GradingError: if ``cells`` doesn't name exactly the ``answerable`` values the
+            traces have.
+        Shortfall: if any value's pool is smaller than it needs.
     """
-    by_cell: dict[tuple[str, str], dict[str, list[TraceRef]]] = defaultdict(lambda: defaultdict(list))
-    for r in refs:
-        if r.item_id not in excluded:
-            by_cell[(r.answerable, r.model)][r.item_id].append(r)
     answerables = sorted({r.answerable for r in refs})
+    if set(cells) != set(answerables):
+        raise GradingError(f"cell sizes are for {sorted(cells)}; the traces have "
+                           f"{answerables}")
     models = sorted({r.model for r in refs})
-    rng = random.Random(seed)
-    used: set[str] = set()
+    traces: dict[tuple[str, str], list[TraceRef]] = defaultdict(list)
+    models_of: dict[str, set[str]] = defaultdict(set)
+    value_of: dict[str, str] = {}
+    for r in refs:
+        traces[(r.item_id, r.model)].append(r)
+        models_of[r.item_id].add(r.model)
+        value_of[r.item_id] = r.answerable
+    item_rng = random.Random(seed)
+    assign_rng = random.Random(assign_seed)
     out: list[TraceRef] = []
-    short: dict[tuple[str, str], tuple[int, int]] = {}
+    short: dict[str, tuple[int, int]] = {}
+    incomplete: dict[str, int] = {}
     for a in answerables:
-        for m in models:
-            pool = sorted(set(by_cell[(a, m)]) - used)
-            if len(pool) < per_cell:
-                short[(a, m)] = (len(pool), per_cell)
-                continue
-            for item_id in rng.sample(pool, per_cell):
-                used.add(item_id)
-                options = sorted(by_cell[(a, m)][item_id], key=lambda r: (r.run, r.trace_id))
-                out.append(options[0] if len(options) == 1 else rng.choice(options))
+        mine = sorted(i for i, v in value_of.items() if v == a and i not in excluded)
+        pool = [i for i in mine if models_of[i] == set(models)]
+        incomplete[a] = len(mine) - len(pool)
+        need = cells[a] * len(models)
+        if len(pool) < need:
+            short[a] = (len(pool), need)
+            continue
+        chosen = sorted(item_rng.sample(pool, need))
+        assign_rng.shuffle(chosen)
+        for k, m in enumerate(models):
+            for item_id in chosen[k * cells[a]:(k + 1) * cells[a]]:
+                options = sorted(traces[(item_id, m)], key=lambda r: (r.run, r.trace_id))
+                out.append(options[0] if len(options) == 1 else item_rng.choice(options))
     if short:
         raise Shortfall(short)
-    return out
+    return out, incomplete
 
 
 def assign_ids_and_order(
@@ -388,7 +431,7 @@ def run_draw(
     runs: Sequence[Path],
     out_dir: Path,
     *,
-    per_cell: int = PER_CELL,
+    cells: Mapping[str, int] = CELLS,
     sealed_per_answerable: int = SEALED_PER_ANSWERABLE,
     exclude_from: Sequence[str] = EXCLUDE_FROM,
     exclude_root: Path = REPO,
@@ -417,9 +460,10 @@ def run_draw(
     dirs = run_dirs(runs)
     refs = read_runs(dirs, items, train_sha)
     excluded, sources = exclusion_ids(exclude_from, exclude_root)
-    order_seed, ids_seed, sealed_seed = f"{seed}/order", f"{seed}/ids", f"{seed}/sealed"
-    cells = draw_cells(refs, excluded, per_cell, seed)
-    drawn = assign_ids_and_order(cells, ids_seed, order_seed)
+    assign_seed, order_seed = f"{seed}/assign", f"{seed}/order"
+    ids_seed, sealed_seed = f"{seed}/ids", f"{seed}/sealed"
+    picked, incomplete = draw_cells(refs, excluded, cells, seed, assign_seed)
+    drawn = assign_ids_and_order(picked, ids_seed, order_seed)
     sealed = draw_sealed(drawn, sealed_per_answerable, sealed_seed)
 
     key_text = jsonl_text(key_records(drawn))
@@ -436,8 +480,9 @@ def run_draw(
     record = {
         "round": ROUND,
         "drawn_on": today or dt.date.today().isoformat(),
-        "seeds": {"draw": seed, "order": order_seed, "ids": ids_seed, "sealed": sealed_seed},
-        "per_cell": per_cell,
+        "seeds": {"draw": seed, "assign": assign_seed, "order": order_seed, "ids": ids_seed,
+                  "sealed": sealed_seed},
+        "cells_per_model": dict(sorted(cells.items())),
         "sealed_per_answerable": sealed_per_answerable,
         "train_file": {"path": train_file.name, "sha256": train_sha, "items": len(items)},
         "runs": [
@@ -456,6 +501,7 @@ def run_draw(
             "ids": len(excluded),
             "ids_sha256": ids_sha256(excluded),
         },
+        "items_without_every_model": incomplete,
         "cells": {a: dict(sorted(m.items())) for a, m in sorted(cell_counts.items())},
         "sealed": dict(sorted(sealed_counts.items())),
         "total": len(drawn),
@@ -477,14 +523,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="run directories, or parents holding them one level down")
     ap.add_argument("--dir", type=Path, default=None,
                     help="round directory (default: $NGQ_DATA_DIR/grading/round-first)")
-    ap.add_argument("--per-cell", type=int, default=PER_CELL)
+    ap.add_argument("--cells", default=",".join(f"{a}={n}" for a, n in CELLS.items()),
+                    help="traces per model for each answerable value "
+                         "(default: %(default)s)")
     ap.add_argument("--sealed-per-answerable", type=int, default=SEALED_PER_ANSWERABLE)
     ap.add_argument("--seed", default=DRAW_SEED)
     ap.add_argument("--force", action="store_true", help="replace an existing draw")
     args = ap.parse_args(argv)
     try:
         out_dir = args.dir or default_round_dir()
-        record = run_draw(args.items, args.runs, out_dir, per_cell=args.per_cell,
+        record = run_draw(args.items, args.runs, out_dir, cells=parse_cells(args.cells),
                           sealed_per_answerable=args.sealed_per_answerable, seed=args.seed,
                           force=args.force)
     except GradingError as e:

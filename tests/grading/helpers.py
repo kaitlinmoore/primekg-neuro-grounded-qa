@@ -30,6 +30,8 @@ EXCLUDE = ("docs/*.md",)
 """Exclusion globs relative to FIXTURES: ``docs/mentions.md`` names one item."""
 MENTIONED_ITEM = "q-0000000000a3"
 PER_CELL = 2
+CELLS = {a: PER_CELL for a in ("correctable", "no", "partial", "yes")}
+"""Equal cells for the shared fixture round: 4 values x 2 models x 2 = 16 traces."""
 SEALED = 1
 
 SENTINEL_STRINGS = (
@@ -67,13 +69,13 @@ def saved_traces(parent: Path) -> list[dict[str, Any]]:
     return [json.loads(line)["traces"][0] for line in path.read_text("utf-8").splitlines() if line]
 
 
-def make_round(tmp: Path, *, per_cell: int = PER_CELL, sealed: int = SEALED) -> Path:
+def make_round(tmp: Path, *, cells: dict[str, int] = CELLS, sealed: int = SEALED) -> Path:
     """Draw and export the fixture runs into ``tmp/round``; returns the round dir."""
     import draw
     import export
 
     out = tmp / "round"
-    draw.run_draw(ITEMS, list(RUNS), out, per_cell=per_cell, sealed_per_answerable=sealed,
+    draw.run_draw(ITEMS, list(RUNS), out, cells=cells, sealed_per_answerable=sealed,
                   exclude_from=EXCLUDE, exclude_root=FIXTURES, today="2026-01-01")
     export.run_export(out, ITEMS)
     return out

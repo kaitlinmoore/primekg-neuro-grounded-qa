@@ -12,7 +12,7 @@ In the round directory, `$NGQ_DATA_DIR/grading/round-first/` (outside the repo, 
 |---|---|---|---|
 | `grading_key.jsonl` | `draw.py` | `grading_id` → position, model, run, trace, item, `answerable` | after unblinding |
 | `sealed.json` | `draw.py` | the sealed validation subset: a list of `grading_id`s | after unblinding |
-| `draw.json` | `draw.py` | seeds, source-file hashes, the exclusion list's size and hash, cell counts | after unblinding |
+| `draw.json` | `draw.py` | seeds, requested cell sizes, source-file hashes, the exclusion list's size and hash, cell counts | after unblinding |
 | `export.jsonl` | `export.py` | what the grader sees: step 1 (question, tool calls and results, final message) and step 2 (gold, `answerable`, premise, graph gaps) | never (it holds item and trace text) |
 | `labels_first.jsonl` | the viewer | one label record per graded trace, in grading order | no; the locked, stripped copy is |
 | `progress.json` | the viewer | the trace in progress: step-1 answers, locked at reveal | never |
@@ -31,7 +31,7 @@ Partial labels are never committed.
 
 Run from the repo root in WSL, with the env loaded (`echo $UV_PROJECT_ENVIRONMENT` must print a path). No API key is needed or used.
 
-**1. Draw.** A seeded sample, stratified by `answerable` and model, each item at most once, with items named in the docs and handoffs left out (they are items whose scores Kaitlin has read). It prints pass/fail and hashes only, and stops, writing nothing, if a cell can't be filled.
+**1. Draw.** A seeded sample, stratified by `answerable` and model, each item at most once, with items named in four committed docs left out (`docs/methodology.md`, `docs/reward_hacking_audit.md`, `docs/question_set_design.md`, `docs/changelog.md`: they discuss items and their scores). For each `answerable` value it draws the items with one seed and splits them between the models with another, so neither model fills first. It prints pass/fail and hashes only, and stops, writing nothing, if a cell can't be filled.
 
 ```bash
 uv run python scripts/grading/draw.py \
@@ -41,7 +41,7 @@ uv run python scripts/grading/draw.py \
          outputs/sonnet-train-2026-11-21/c3 outputs/sonnet-train-2026-11-21/c4
 ```
 
-Defaults: seed `ngq-grade-first-v1` (order, ID and sealed seeds derive from it), `--per-cell 8`, `--sealed-per-answerable 5`. It refuses to replace an existing draw unless `--force` is given.
+Defaults: seed `ngq-grade-first-v1` (assign, order, ID and sealed seeds derive from it), `--cells correctable=4,no=8,partial=8,yes=12` (traces per model: 64 in all; unequal because the train set has only 10 `correctable` items), `--sealed-per-answerable 5`. It refuses to replace an existing draw unless `--force` is given.
 
 **2. Export.** Builds `export.jsonl` from the key file, then checks it by code (count, order, no forbidden key, every step-2 block, the served label on every directed edge). Neither command prints a record.
 

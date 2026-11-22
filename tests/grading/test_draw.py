@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from .helpers import (
+    CELLS,
     EXCLUDE,
     FIXTURES,
     ITEMS,
@@ -35,7 +36,7 @@ from grading_common import (  # noqa: E402
 
 
 def _draw(out: Path, **kw) -> dict:
-    args = dict(per_cell=PER_CELL, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
+    args = dict(cells=CELLS, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
                 exclude_root=FIXTURES, today="2026-01-01")
     args.update(kw)
     return draw.run_draw(ITEMS, list(RUNS), out, **args)
@@ -96,17 +97,75 @@ def test_sealed_subset_is_stratified_and_holds_ids_only(tmp_path):
     assert rec["sealed"] == {a: 2 for a in ("correctable", "no", "partial", "yes")}
 
 
+def test_unequal_cells_are_filled_and_recorded(tmp_path):
+    cells = {"correctable": 1, "no": 2, "partial": 2, "yes": 1}
+    rec = _draw(tmp_path, cells=cells)
+    key = read_jsonl(tmp_path / KEY_FILE)
+    got = Counter((k["answerable"], k["model"]) for k in key)
+    assert got == {(a, m): n for a, n in cells.items()
+                   for m in ("sentinel-model-newer", "sentinel-model-older")}
+    assert len({k["item_id"] for k in key}) == len(key) == 12 == rec["total"]
+    assert rec["cells_per_model"] == cells
+    assert rec["seeds"]["assign"] == "ngq-grade-first-v1/assign"
+    assert rec["items_without_every_model"] == {a: 0 for a in cells}
+
+
+def test_cells_must_name_every_answerable_value(tmp_path):
+    with pytest.raises(GradingError, match="cell sizes"):
+        _draw(tmp_path, cells={"no": 1, "partial": 1, "yes": 1})
+    assert not (tmp_path / KEY_FILE).exists()
+
+
+def test_parse_cells():
+    assert draw.parse_cells("correctable=4, no=8,partial=8,yes=12") == draw.CELLS
+    for bad in ("no=0", "no", "no=x", "no=1,no=2", "=3"):
+        with pytest.raises(GradingError):
+            draw.parse_cells(bad)
+
+
+def _split(refs, seed="s", assign_seed="s/assign"):
+    picked, _ = draw.draw_cells(refs, set(), {"yes": 3}, seed, assign_seed)
+    return {r.item_id: r.model for r in picked}
+
+
+def _refs(n_items, models=("model-a", "model-b")):
+    return [draw.TraceRef("run", f"t{i}{m}", 1, 0, m, f"q-{i:012x}", "yes")
+            for i in range(n_items) for m in models]
+
+
+def test_models_are_assigned_by_the_assign_seed():
+    """The items drawn depend on the draw seed only; which model each goes to depends
+    on the assign seed, and no model takes first pick."""
+    refs = _refs(12)
+    base = _split(refs)
+    other = _split(refs, assign_seed="other/assign")
+    assert set(base) == set(other)
+    assert base != other
+    assert _split(refs) == base
+    # Over many assign seeds, the first-sorted model's share of any given item is
+    # about a half, as a seeded split implies (a fill-first order would give it the
+    # draw seed's first picks every time).
+    first = Counter()
+    for k in range(200):
+        for item, m in _split(refs, assign_seed=f"a{k}").items():
+            first[item] += m == "model-a"
+    assert all(60 <= c <= 140 for c in first.values()), first
+
+
+def test_items_lacking_a_models_trace_are_left_out_and_counted():
+    refs = _refs(8) + [draw.TraceRef("run", "solo", 1, 0, "model-a", "q-0000000000ff", "yes")]
+    picked, incomplete = draw.draw_cells(refs, set(), {"yes": 4})
+    assert incomplete == {"yes": 1}
+    assert "q-0000000000ff" not in {r.item_id for r in picked}
+
+
 def test_shortfall_stops_and_writes_nothing(tmp_path):
-    # Five items per answerable value (four "yes" after the exclusion). Models fill in
-    # sorted order, so "newer" takes 3 and leaves "older" short in every value.
+    # Five items per answerable value (four "yes" after the exclusion); 3 per model
+    # needs 6 items.
     with pytest.raises(draw.Shortfall) as e:
-        _draw(tmp_path, per_cell=3)
-    assert e.value.short == {
-        ("correctable", "sentinel-model-older"): (2, 3),
-        ("no", "sentinel-model-older"): (2, 3),
-        ("partial", "sentinel-model-older"): (2, 3),
-        ("yes", "sentinel-model-older"): (1, 3),
-    }
+        _draw(tmp_path, cells={a: 3 for a in CELLS})
+    assert e.value.short == {"correctable": (5, 6), "no": (5, 6), "partial": (5, 6),
+                             "yes": (4, 6)}
     assert "q-" not in str(e.value)
     assert not (tmp_path / KEY_FILE).exists()
 
@@ -144,7 +203,8 @@ def test_exclusion_ids_by_pattern(tmp_path):
 
 def test_main_prints_no_ids_or_cell_counts(tmp_path, capsys):
     rc = draw.main(["--items", str(ITEMS), "--runs", *map(str, RUNS), "--dir", str(tmp_path),
-                    "--per-cell", str(PER_CELL), "--sealed-per-answerable", str(SEALED)])
+                    "--cells", ",".join(f"{a}={n}" for a, n in CELLS.items()),
+                    "--sealed-per-answerable", str(SEALED)])
     out = capsys.readouterr().out
     assert rc == 0 and "draw: PASS" in out
     assert not re.search(r"\b[qg]-[0-9a-f]{8,}", out)
@@ -169,7 +229,7 @@ def test_accepts_runs_made_from_a_recorded_selection_of_train(tmp_path):
     cfg = json.loads(cfg_path.read_text())
     cfg["env"]["taskset"]["items_path"] = str(sel_items)
     cfg_path.write_text(json.dumps(cfg))
-    kw = dict(per_cell=PER_CELL, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
+    kw = dict(cells=CELLS, sealed_per_answerable=SEALED, exclude_from=EXCLUDE,
               exclude_root=FIXTURES)
     with pytest.raises(GradingError, match="SHA-256"):
         draw.run_draw(ITEMS, [dst, RUN_DIRECTION], tmp_path / "out", **kw)
@@ -178,3 +238,8 @@ def test_accepts_runs_made_from_a_recorded_selection_of_train(tmp_path):
     rec = draw.run_draw(ITEMS, [dst, RUN_DIRECTION], tmp_path / "out", **kw)
     assert rec["runs"][0]["selection_sha256"] == sel_sha
     assert rec["runs"][1]["selection_sha256"] is None
+
+
+def test_default_exclusion_sources_are_the_four_committed_docs():
+    assert draw.EXCLUDE_FROM == ("docs/methodology.md", "docs/reward_hacking_audit.md",
+                                 "docs/question_set_design.md", "docs/changelog.md")
