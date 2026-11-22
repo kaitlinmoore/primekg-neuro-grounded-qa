@@ -1,0 +1,96 @@
+{
+ "_comment": "Synthetic store for tests/grading. Built by build_fixtures.py.",
+ "build_id": "fixture-grading-store-v1",
+ "entities": [
+  {
+   "id": "GENE_A",
+   "name": "Gene Alpha",
+   "type": "gene/protein"
+  },
+  {
+   "id": "GENE_B",
+   "name": "Gene Beta",
+   "type": "gene/protein"
+  },
+  {
+   "id": "DIS_1",
+   "name": "Disease One",
+   "type": "disease"
+  },
+  {
+   "id": "DIS_2",
+   "name": "Disease Two",
+   "type": "disease"
+  },
+  {
+   "id": "DIS_3",
+   "name": "Disease Three",
+   "type": "disease"
+  },
+  {
+   "id": "DIS_P",
+   "name": "Disease Parent",
+   "type": "disease"
+  },
+  {
+   "id": "group:DIS_GRP",
+   "name": "Disease Group",
+   "type": "disease"
+  },
+  {
+   "id": "DRUG_X",
+   "name": "Drug X",
+   "type": "drug"
+  }
+ ],
+ "edges": [
+  {
+   "id": "E:000001",
+   "subject": "GENE_A",
+   "relation": "associated_with",
+   "display_relation": "associated with",
+   "object": "DIS_1",
+   "directed": false
+  },
+  {
+   "id": "E:000002",
+   "subject": "GENE_B",
+   "relation": "associated_with",
+   "display_relation": "associated with",
+   "object": "DIS_1",
+   "directed": false
+  },
+  {
+   "id": "E:000003",
+   "subject": "DRUG_X",
+   "relation": "indicated_for",
+   "display_relation": "indication",
+   "object": "DIS_2",
+   "directed": false
+  },
+  {
+   "id": "E:000004",
+   "subject": "DRUG_X",
+   "relation": "contraindicated_for",
+   "display_relation": "contraindication",
+   "object": "DIS_1",
+   "directed": false
+  },
+  {
+   "id": "E:000010",
+   "subject": "DIS_3",
+   "relation": "disease_disease",
+   "display_relation": "parent-child",
+   "object": "DIS_P",
+   "directed": true
+  },
+  {
+   "id": "E:000011",
+   "subject": "DIS_P",
+   "relation": "disease_disease",
+   "display_relation": "parent-child",
+   "object": "group:DIS_GRP",
+   "directed": true
+  }
+ ]
+}
