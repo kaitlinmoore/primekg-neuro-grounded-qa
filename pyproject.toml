@@ -24,6 +24,9 @@ dev = [
     "ipykernel",
     "scikit-learn>=1.9.1",
     "ruff>=0.17.6",
+    # The local grading viewer (scripts/grading/app.py), run bound to localhost with
+    # usage statistics off; see validation/README.md.
+    "streamlit>=1.67.0",
 ]
 # Graph download and measurement (scripts/data/, tests/data/). duckdb reads
 # PrimeKG's CSV and OptimusKG's parquet files directly and runs the joins and

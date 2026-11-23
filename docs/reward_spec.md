@@ -150,6 +150,11 @@ stored order only if the edge is flagged `directed`.
   terms; `hierarchy link (direction not recorded for grouped diseases)` with a grouped
   end) instead of PrimeKG's `parent-child`; `display_relation` is never scored.
 - Relation labels match exactly: no case folding, synonym or inverse-label matching.
+- A claim is supported only if a cited, retrieved edge states that triple. A fact
+  derived from several edges (for example by is-a transitivity: A subtype of B and B
+  subtype of C, so A subtype of C) is unsupported even when the inference is sound.
+  Conclusions belong in `answer_text`, with each fact the answer rests on as its own
+  claim. See `docs/labeling_guide.md`, R17 and Q25.
 - Names (`subject_name`, `object_name`) are never compared.
 - Extra non-supporting cites alongside a supporting one cost nothing in the score; they
   are counted in the `nonsupporting_valid_cites` and `citations_per_claim` metrics.
